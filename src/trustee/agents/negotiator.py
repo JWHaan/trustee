@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
+from pydantic import BaseModel
+
 from ..llm import LLM
 from ..protocol import Accept, Counter, GoodSpec, Offer
 
@@ -117,7 +119,7 @@ class Negotiator:
         except json.JSONDecodeError as exc:
             raise ValueError(f"negotiation LLM returned invalid JSON: {text[:200]}") from exc
 
-    def _coerce(self, model: type, obj: dict[str, Any]):
+    def _coerce(self, model: type[BaseModel], obj: dict[str, Any]):
         payload = dict(obj)
         payload["sender"] = self.agent_id
         price = payload.get("price")

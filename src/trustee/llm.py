@@ -27,7 +27,7 @@ class LLM:
             base_url=base_url or os.environ.get("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
             api_key=api_key or os.environ.get("LLM_API_KEY", "no-key"),
         )
-        self.model = model or os.environ.get("LLM_MODEL", "meta/llama-3.1-70b-instruct")
+        self.model: str = model if model is not None else (os.environ.get("LLM_MODEL") or "meta/llama-3.1-70b-instruct")
         self.temperature = temperature
         self.last_raw: str = ""
 

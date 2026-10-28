@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 from ..ledger import Ledger
 from ..llm import LLM
@@ -95,7 +96,7 @@ class BuyerAgent(Negotiator):
             if not ok:
                 failures.append(detail)
 
-        verdict = "accept" if not failures else "reject"
+        verdict: Literal["accept", "reject"] = "accept" if not failures else "reject"
         reason = self._summarize(failures or ["all acceptance criteria met"])
         attest = Attest(
             sender=self.agent_id,
