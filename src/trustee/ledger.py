@@ -49,8 +49,7 @@ class Ledger:
             return [
                 e
                 for e in self._events
-                if (deal_id is None or e.deal_id == deal_id)
-                and (kinds is None or e.kind in kinds)
+                if (deal_id is None or e.deal_id == deal_id) and (kinds is None or e.kind in kinds)
             ]
 
     def __iter__(self) -> Iterator[Event]:

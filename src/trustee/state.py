@@ -46,9 +46,7 @@ _TRANSITIONS: dict[DealState, set[DealState]] = {
 class IllegalTransition(Exception):
     def __init__(self, deal_id: str, from_state: DealState, to_state: DealState):
         self.deal_id, self.from_state, self.to_state = deal_id, from_state, to_state
-        super().__init__(
-            f"deal {deal_id}: {from_state} -> {to_state} not allowed"
-        )
+        super().__init__(f"deal {deal_id}: {from_state} -> {to_state} not allowed")
 
 
 class Deal:

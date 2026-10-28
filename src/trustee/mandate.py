@@ -65,9 +65,7 @@ class MandateEngine:
             if grant == "spend" and contract.price > m.max_amount:
                 violations.append(f"{agent_id}: price {contract.price} exceeds cap {m.max_amount}")
             if m.allowed_categories and contract.good.category not in m.allowed_categories:
-                violations.append(
-                    f"{agent_id}: category '{contract.good.category}' not allowed by mandate"
-                )
+                violations.append(f"{agent_id}: category '{contract.good.category}' not allowed by mandate")
             counterparties = getattr(contract, ("seller" if side == "buyer" else "buyer"))
             if m.allowed_counterparties and counterparties not in m.allowed_counterparties:
                 violations.append(f"{agent_id}: counterparty '{counterparties}' not allowlisted")

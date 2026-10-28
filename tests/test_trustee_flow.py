@@ -44,13 +44,13 @@ def test_honest_deal_settles():
     d = trustee.on_contract(contract)
     assert d.action == "escrowed" and trustee.deal.state == DealState.ESCROWED
 
-    delivery = Delivery(deal_id=contract.deal_id, sender="seller-agent-1",
-                       deliverable_ref=GOOD.deliverable_ref, content_hash="ab12cd")
+    delivery = Delivery(
+        deal_id=contract.deal_id, sender="seller-agent-1", deliverable_ref=GOOD.deliverable_ref, content_hash="ab12cd"
+    )
     assert trustee.on_delivery(delivery, contract).action == "delivered"
     assert trustee.deal.state == DealState.DELIVERED
 
-    att = Attest(deal_id=contract.deal_id, sender="buyer-agent-1",
-                 verdict="accept", reason="hash matches, tests pass")
+    att = Attest(deal_id=contract.deal_id, sender="buyer-agent-1", verdict="accept", reason="hash matches, tests pass")
     d = trustee.on_attest(att, contract)
     assert d.action == "settled" and trustee.deal.state == DealState.SETTLED
     assert d.escrow is not None and d.escrow.status == "captured"
@@ -62,8 +62,9 @@ def test_honest_deal_settles():
 def test_cheat_deal_voids_and_refunds():
     contract, trustee, _ = make_contract()
     trustee.on_contract(contract)
-    delivery = Delivery(deal_id=contract.deal_id, sender="seller-agent-1",
-                       deliverable_ref=GOOD.deliverable_ref, content_hash="wrong")
+    delivery = Delivery(
+        deal_id=contract.deal_id, sender="seller-agent-1", deliverable_ref=GOOD.deliverable_ref, content_hash="wrong"
+    )
     trustee.on_delivery(delivery, contract)
 
     att = Attest(
@@ -96,11 +97,11 @@ def test_deadline_lapse_voids():
 def test_terminal_deals_are_immutable():
     contract, trustee, _ = make_contract()
     trustee.on_contract(contract)
-    delivery = Delivery(deal_id=contract.deal_id, sender="seller-agent-1",
-                       deliverable_ref=GOOD.deliverable_ref, content_hash="ok")
+    delivery = Delivery(
+        deal_id=contract.deal_id, sender="seller-agent-1", deliverable_ref=GOOD.deliverable_ref, content_hash="ok"
+    )
     trustee.on_delivery(delivery, contract)
-    att = Attest(deal_id=contract.deal_id, sender="buyer-agent-1",
-                 verdict="accept", reason="ok")
+    att = Attest(deal_id=contract.deal_id, sender="buyer-agent-1", verdict="accept", reason="ok")
     assert trustee.on_attest(att, contract).action == "settled"
     # duplicate webhook delivery must be an idempotent no-op, not a double-settle
     d = trustee.on_attest(att, contract)

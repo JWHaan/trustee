@@ -142,8 +142,9 @@ class Trustee:
         """Deal deadline passed with no attestation -> release funds."""
         if self.deal.is_terminal:
             return TrusteeDecision("no-op", self.deal, escrow=self._escrow)
-        self._escrow = self.paypal.void(self._escrow or EscrowOrder(order_id="unknown", status="authorized"),
-                                        reason="deadline_lapse")
+        self._escrow = self.paypal.void(
+            self._escrow or EscrowOrder(order_id="unknown", status="authorized"), reason="deadline_lapse"
+        )
         self.deal.transition(DealState.VOIDED, "deadline lapsed; funds released")
         self._log("paypal", {"op": "void", "note": "auto-void on deadline"})
         self._explanation("unwind", contract, "deadline lapsed — funds released automatically")
@@ -185,7 +186,7 @@ class Trustee:
                         "role": "user",
                         "content": (
                             f"Decision '{op}' for deal {contract.deal_id}: {fact}. "
-                            "Respond with JSON: {\"explanation\": str}"
+                            'Respond with JSON: {"explanation": str}'
                         ),
                     }
                 ],
