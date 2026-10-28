@@ -21,6 +21,7 @@ from ..mandate import MandateEngine, MandateReport
 from ..paypal import EscrowOrder, PayPalClient, PayPalError
 from ..protocol import Attest, Contract, Delivery
 from ..state import Deal, DealState, IllegalTransition
+from .arbiter import Judge, Ruling
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class Trustee:
         ledger=None,
         buyer_email: str = "buyer-sandbox@trustee.dev",
         seller_email: str = "seller-sandbox@trustee.dev",
+        judge: Judge | None = None,
     ):
         self.deal = deal
         self.mandates = mandates
@@ -54,7 +56,9 @@ class Trustee:
         self.ledger = ledger
         self._buyer_email = buyer_email
         self._seller_email = seller_email
+        self.judge = judge
         self._escrow: EscrowOrder | None = None
+        self._last_delivery: Delivery | None = None
 
     # ------------------------------------------------------------ public API
 
@@ -101,6 +105,7 @@ class Trustee:
             self._explanation("delivery", contract, "delivery ref does not match contract")
             return TrusteeDecision("error", self.deal, escrow=escrow)
         self.deal.transition(DealState.DELIVERED, "deliverable handed off")
+        self._last_delivery = delivery
         self._log(
             "delivery",
             {
@@ -125,17 +130,21 @@ class Trustee:
             self._explanation("settle", contract, f"settled: {escrow.details.get('capture_id', escrow.order_id)}")
             return TrusteeDecision("settled", self.deal, escrow=escrow)
 
-        # reject: arbiter may rule; without one, the Trustee voids (refunds).
+        # reject: the arbiter rules; without one, the Trustee applies its
+        # built-in policy. Ruling decides whether the escrow is voided.
         self.deal.transition(DealState.DISPUTED, f"buyer rejected: {attest.reason[:120]}")
         self._log("state", {"attest": attest.model_dump(mode="json")})
-        ruling = self._arbitrate(attest, contract)
-        if ruling == "release":
+        decision, ruling = self._arbitrate(attest, contract)
+        if decision == "release":
             escrow = self.paypal.void(self._raise_escrow(), reason=attest.reason[:120])
             self._escrow = escrow
             self.deal.transition(DealState.VOIDED, "arbitration released funds (refund)")
             self._log("paypal", {"op": "void", "order_id": escrow.order_id, "note": "funds released to buyer"})
-            self._explanation("unwind", contract, "voided; buyer refunded after arbitration")
+            self._log("ruling", {"decision": "release", "clause": ruling.clause, "note": ruling.reasoning})
+            self._explanation("unwind", contract, f"voided; buyer refunded — clause: {ruling.clause}")
             return TrusteeDecision("voided", self.deal, escrow=escrow)
+        self._log("ruling", {"decision": "uphold", "clause": ruling.clause, "note": ruling.reasoning})
+        self._explanation("dispute", contract, f"escrow held pending resolution — clause: {ruling.clause}")
         return TrusteeDecision("disputed", self.deal, escrow=self._escrow)
 
     def on_deadline_lapse(self, contract: Contract) -> TrusteeDecision:
@@ -157,15 +166,35 @@ class Trustee:
             raise IllegalTransition(self.deal.deal_id, self.deal.state, DealState.DELIVERED)
         return self._escrow
 
-    def _arbitrate(self, attest: Attest, contract: Contract) -> str:
-        """Default arbiter: deterministic policy. Swappable for the LLM judge
-        (Agent #4) — same signature, so the platform never changes. Returns
-        'release' or 'uphold'.
+    def _arbitrate(self, attest: Attest, contract: Contract) -> tuple[str, Ruling]:
+        """Delegate to the judge when one is set; otherwise apply the
+        Trustee's built-in deterministic policy. Returns (decision, ruling).
         """
-        # Evidence-based default: hash recorded and buyer cites a failed
-        # acceptance criterion -> release. No credible evidence -> uphold.
-        has_evidence = bool(attest.evidence)
-        return "release" if has_evidence else "uphold"
+        delivery = self._last_delivery or Delivery(
+            sender="trustee",
+            deal_id=contract.deal_id,
+            deliverable_ref=contract.good.deliverable_ref,
+            content_hash="",
+        )
+        if self.judge is not None:
+            ruling = self.judge.rule(contract, delivery, attest)
+            return ruling.decision, ruling
+        # Built-in policy: objective evidence of breach -> release, else uphold.
+        evidence = attest.evidence
+        breached = evidence.get("sha256_check") in ("mismatch", "unknown_ref") or "failed" in evidence.get(
+            "checker", ""
+        )
+        return (
+            (
+                "release",
+                Ruling("release", "evidence clause", attest.reason[:160], objective=True),
+            )
+            if breached
+            else (
+                "uphold",
+                Ruling("uphold", "evidence clause", attest.reason[:160], objective=True),
+            )
+        )
 
     def _log(self, kind: str, payload: dict) -> None:
         if self.ledger is not None:
