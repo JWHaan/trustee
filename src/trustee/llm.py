@@ -51,7 +51,8 @@ class LLM:
             if raw.startswith("```"):
                 raw = raw.strip("`").removeprefix("json").strip()
             try:
-                return json.loads(raw)
+                data: dict[str, Any] = json.loads(raw)
+                return data
             except json.JSONDecodeError:
                 messages = [
                     *messages,
