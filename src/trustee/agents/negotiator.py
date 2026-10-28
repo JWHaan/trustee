@@ -90,10 +90,10 @@ class Negotiator:
 
     # ------------------------------------------------------------ internals
 
-    def _propose(self, extra: dict[str, Any]) -> dict[str, Any]:
+    def _propose(self, extra: dict[str, Any], system: str | None = None) -> dict[str, Any]:
         ctx = json.dumps(extra, default=str)
         raw = self.llm.complete(
-            negotiate_system(self.role),
+            system or negotiate_system(self.role),
             [
                 *self.transcript[-6:],
                 {"role": "user", "content": f"Context: {ctx}\nNow emit your JSON move."},
