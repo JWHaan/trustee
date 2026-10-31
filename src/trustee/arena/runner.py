@@ -27,6 +27,13 @@ value is in the four things the plan assumed would be free:
    behalf, standing in for each agent's own signer. The Trustee's verifications
    land on the tape as `identity` rows.
 
+6. **Attacks and waits.** A scenario's `attack` ("forged_signature") makes the runner sign
+   the seller's side of the contract with an unregistered impostor key: the Trustee must
+   refuse before PayPal is touched. When PayPal needs the payer to approve the order, the run
+   publishes the approve link and polls until the buyer approves, cancels, or the wait times
+   out (`approval.py`). The `outside` flow hands the whole deal to agents that drive the
+   public /v1 API over HTTP (`outside.py`).
+
 A fallback mints a new deal id rather than replaying over the failed one: a
 half-written tape from a dead live attempt and a complete scripted tape must
 not share a key, or the grid groups two different stories together.
@@ -37,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,18 +52,22 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from ..agents.arbiter import ArbiterAgent
 from ..agents.buyer import ArtifactStore, BuyerAgent
 from ..agents.seller import SellerAgent
-from ..agents.trustee import Trustee
+from ..agents.trustee import Trustee, TrusteeDecision
 from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry
 from ..ledger import Event, Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine
-from ..paypal import EscrowOrder, PayPalClient
+from ..paypal import EscrowOrder, PayPalClient, PayPalError
 from ..protocol import Accept, Contract, Counter, Offer
 from ..state import Deal, DealState
+from .approval import ApprovalGate, ApprovalWait, wait_for_approval
 from .fixtures import load_mandates
+from .outside import OutsideFlow
 from .scenario import FIXTURES, Scenario
 from .scripted import ScriptedLLM
 
@@ -66,6 +78,7 @@ SELLER_ID = "seller-agent-1"
 ARBITER_ID = "arbiter-agent-1"
 
 MODES = ("auto", "live", "scripted")
+ATTACKS = ("forged_signature",)
 MAX_ROUNDS = 3  # buyer+seller exchanges after the opening offer
 
 Handler = Callable[[Event], None]
@@ -91,6 +104,7 @@ class RunResult:
     attest: dict[str, Any] | None = None
     error: str | None = None
     fallback_from: str | None = None
+    outcome: str | None = None  # why a run ended short of a held escrow, e.g. "rejected_identity"
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -108,6 +122,7 @@ class RunResult:
             "attest": self.attest,
             "error": self.error,
             "fallback_from": self.fallback_from,
+            "outcome": self.outcome,
         }
 
 
@@ -122,6 +137,13 @@ class DealRunner:
         mandates: MandateEngine | None = None,
         store: ArtifactStore | None = None,
         checkers: dict[str, Checker] | None = None,
+        *,
+        self_client: Callable[[], httpx.Client] | None = None,
+        close_self_client: bool = False,
+        platform_ledger: Ledger | None = None,
+        operator_token: str | None = None,
+        approvals: ApprovalGate | None = None,
+        approval_wait: ApprovalWait | None = None,
     ):
         self.ledger = ledger
         self.paypal = paypal
@@ -131,6 +153,14 @@ class DealRunner:
         self.mandates = mandates or MandateEngine(load_mandates())
         self.store = store or ArtifactStore.load(FIXTURES)
         self.checkers = checkers if checkers is not None else default_checkers()
+        # Only the `outside` flow uses these: an HTTP client for the arena's own /v1 API and the
+        # platform's ledger, whose rows for the deal are copied onto the run's tape.
+        self.self_client = self_client
+        self._close_self_client = close_self_client
+        self.platform_ledger = platform_ledger
+        self.operator_token = operator_token
+        self.approvals = approvals
+        self.approval_wait = approval_wait if approval_wait is not None else ApprovalWait.from_env()
 
     # ---------------------------------------------------------------- public
 
@@ -211,6 +241,8 @@ class DealRunner:
                     effective_mode=effective,
                     note=note,
                 )
+                if scenario.flow == "outside":
+                    return self._drive_outside(scenario, deal_id, run_id, requested, effective, fallback_from, store)
                 return self._drive(scenario, deal, run_id, requested, effective, fallback_from, store)
             finally:
                 unsubscribe()
@@ -226,6 +258,8 @@ class DealRunner:
         store: ArtifactStore,
     ) -> RunResult:
         deal_id = deal.deal_id
+        if scenario.attack is not None and scenario.attack not in ATTACKS:
+            raise ValueError(f"unknown attack {scenario.attack!r} (known: {', '.join(ATTACKS)})")
         llm = self._build_llm(scenario, effective)
 
         deal.transition(DealState.NEGOTIATING, "negotiation opened")
@@ -259,7 +293,9 @@ class DealRunner:
                 error="no contract within the move cap", fallback_from=fallback_from,
             )  # fmt: skip
 
-        contract = contract.sign(BUYER_ID, ident.keys[BUYER_ID]).sign(SELLER_ID, ident.keys[SELLER_ID])
+        # The impostor claims to be the seller but holds a key nobody registered.
+        seller_key = AgentKey.generate() if scenario.attack == "forged_signature" else ident.keys[SELLER_ID]
+        contract = contract.sign(BUYER_ID, ident.keys[BUYER_ID]).sign(SELLER_ID, seller_key)
 
         trustee = Trustee(
             deal=deal,
@@ -274,15 +310,21 @@ class DealRunner:
         )
 
         decision = trustee.on_contract(contract)
+        stopped: str | None = None
+        if decision.action == "awaiting_approval":
+            decision, stopped = self._await_payer(deal_id, trustee, contract, decision)
         if decision.action != "escrowed":
-            # Mandate refusal, PayPal failure, or the approval flow stopping
-            # short of a held authorization: all honest, all terminal here.
-            self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=decision.action)
+            # Identity or mandate refusal, PayPal failure, or a payer who never approved: all
+            # honest, all terminal here.
+            outcome = stopped or decision.action
+            self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=outcome)
             result = self._result(
                 run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from
             )
             result.turns = turns
-            result.error = None if decision.action == "rejected_mandate" else decision.action
+            result.outcome = outcome
+            clean = ("rejected_mandate", "rejected_identity", "approval_timeout", "approval_cancelled")
+            result.error = None if outcome in clean else decision.action
             return result
 
         delivery = seller.deliver(contract, cheat=scenario.cheat).sign(ident.keys[SELLER_ID])
@@ -304,6 +346,134 @@ class DealRunner:
             note=f"{effective} run, {turns} negotiation turns",
         )
         return result
+
+    # ------------------------------------------------------------- approval
+
+    def _await_payer(
+        self, deal_id: str, trustee: Trustee, contract: Contract, decision: TrusteeDecision
+    ) -> tuple[TrusteeDecision, str | None]:
+        """Hold the run open while the buyer approves the order at PayPal.
+
+        Returns the decision that ends the wait and, when the run must stop, why. Timeout and
+        cancel both go through `on_approval_cancelled`: nothing was held, so no PayPal call."""
+        assert decision.escrow is not None
+        order_id = decision.escrow.order_id
+        wait = self.approval_wait
+        self.ledger.append(
+            deal_id,
+            "arena",
+            "run",
+            event="awaiting_approval",
+            order_id=order_id,
+            approve_url=decision.escrow.approve_url or "",
+            wait_s=int(wait.timeout_seconds),
+            note="Approve this payment in the PayPal sandbox (test money). Funds are held only after approval.",
+        )
+        cancel = self.approvals.track(order_id) if self.approvals is not None else threading.Event()
+        latest = decision
+
+        def attempt() -> bool:
+            nonlocal latest
+            try:
+                status = str(self.paypal.get_order(order_id).get("status"))
+            except PayPalError as exc:
+                log.warning("approval poll failed for %s: %s", order_id, exc)
+                return False  # transient: ask again on the next tick
+            if status != "APPROVED":
+                return False
+            latest = trustee.on_approved(contract)
+            return latest.action != "error"  # a PayPal failure leaves state unchanged; the next tick retries
+
+        try:
+            result = wait_for_approval(attempt, cancel, wait)
+        finally:
+            if self.approvals is not None:
+                self.approvals.release(order_id)
+        if result == "approved":
+            if latest.action == "escrowed":
+                self.ledger.append(deal_id, "arena", "run", event="payer_approved", note="buyer approved in PayPal")
+            return latest, None
+        note = "buyer cancelled at PayPal" if result == "cancelled" else "no approval before the timeout"
+        self.ledger.append(deal_id, "arena", "run", event=f"approval_{result}", note=note)
+        return trustee.on_approval_cancelled(contract), f"approval_{result}"
+
+    # ----------------------------------------------------------- outside agents
+
+    def _drive_outside(
+        self,
+        scenario: Scenario,
+        deal_id: str,
+        run_id: str,
+        requested: str,
+        effective: str,
+        fallback_from: str | None,
+        store: ArtifactStore,
+    ) -> RunResult:
+        if self.self_client is None:
+            raise RuntimeError("the outside scenario needs a self_client (the arena's own /v1 API)")
+        http = self.self_client()
+        unforward = self._forward_platform(deal_id)
+        try:
+            flow = OutsideFlow(
+                scenario=scenario,
+                deal_id=deal_id,
+                suffix=deal_id.rsplit("_", 1)[-1],
+                ledger=self.ledger,
+                paypal=self.paypal,
+                http=http,
+                operator_token=self.operator_token or os.environ.get("TRUSTEE_OPERATOR_TOKEN") or None,
+                store=store,
+                checkers=self.checkers,
+                llm=self._build_llm(scenario, effective),
+                wait=self.approval_wait,
+            )
+            done = flow.run()
+        finally:
+            unforward()
+            if self._close_self_client:
+                http.close()
+        view = done.view
+        result = RunResult(
+            run_id=run_id,
+            deal_id=deal_id,
+            scenario=scenario.name,
+            mode=requested,
+            effective_mode=effective,
+            state=view["state"],
+            price=str(scenario.agreed_price or scenario.ask),
+            turns=done.turns,
+            contract=view["contract"],
+            escrow=view["escrow"],
+            ruling=view["ruling"],
+            attest=done.attest,
+            fallback_from=fallback_from,
+            outcome=done.outcome,
+        )
+        if done.outcome is not None:
+            self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=done.outcome)
+        else:
+            self.ledger.append(
+                deal_id,
+                "arena",
+                "run",
+                event="run_finished",
+                state=result.state,
+                price=result.price,
+                note=f"{effective} run, agents on /v1 over HTTP",
+            )
+        return result
+
+    def _forward_platform(self, deal_id: str) -> Callable[[], None]:
+        """Copy the platform ledger's rows for this deal onto the run's tape, in order."""
+        source = self.platform_ledger
+        if source is None or source is self.ledger:
+            return lambda: None
+
+        def forward(ev: Event) -> None:
+            if ev.deal_id == deal_id:
+                self.ledger.append(ev.deal_id, ev.actor, ev.kind, **ev.payload)
+
+        return source.subscribe(forward)
 
     # ------------------------------------------------------------ negotiation
 

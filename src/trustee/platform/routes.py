@@ -11,10 +11,10 @@ import html
 import logging
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..protocol import Attest, Contract, Delivery
 from .agent_card import build_agent_card
@@ -36,7 +36,15 @@ def _page(headline: str, detail: str) -> str:
     )
 
 
-def build_router(service: DealService) -> APIRouter:
+class ArenaApprovals(Protocol):
+    """Orders that belong to an arena run rather than a platform deal (see arena/api.py)."""
+
+    def owns(self, order_id: str) -> bool: ...
+
+    def cancel(self, order_id: str) -> None: ...
+
+
+def build_router(service: DealService, arena_approvals: ArenaApprovals | None = None) -> APIRouter:
     router = APIRouter()
 
     async def call(fn: Callable[..., Any], *args: Any, status: int = 200) -> JSONResponse:
@@ -123,7 +131,14 @@ def build_router(service: DealService) -> APIRouter:
 
     # ---------------------------------------------------- PayPal: approval + webhooks
 
-    async def approval(request: Request, token: str, cancelled: bool) -> JSONResponse | HTMLResponse:
+    async def approval(
+        request: Request, token: str, cancelled: bool
+    ) -> JSONResponse | HTMLResponse | RedirectResponse:
+        if arena_approvals is not None and arena_approvals.owns(token):
+            # An arena run polls PayPal itself; the payer just goes back to the arena page.
+            if cancelled:
+                arena_approvals.cancel(token)
+            return RedirectResponse("/", status_code=303)
         fn = service.approval_cancel if cancelled else service.approval_return
         wants_json = "application/json" in request.headers.get("accept", "")
         try:
@@ -147,11 +162,11 @@ def build_router(service: DealService) -> APIRouter:
         return HTMLResponse(_page(headline, f"Deal {deal['deal_id']} is {deal['state']}."), status_code=status)
 
     @router.get("/v1/paypal/return", response_model=None)
-    async def paypal_return(request: Request, token: str) -> JSONResponse | HTMLResponse:
+    async def paypal_return(request: Request, token: str) -> JSONResponse | HTMLResponse | RedirectResponse:
         return await approval(request, token, cancelled=False)
 
     @router.get("/v1/paypal/cancel", response_model=None)
-    async def paypal_cancel(request: Request, token: str) -> JSONResponse | HTMLResponse:
+    async def paypal_cancel(request: Request, token: str) -> JSONResponse | HTMLResponse | RedirectResponse:
         return await approval(request, token, cancelled=True)
 
     @router.post("/v1/paypal/webhook")

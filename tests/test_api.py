@@ -65,7 +65,7 @@ def test_healthz_and_scenarios():
 
             scenarios = (await client.get("/api/scenarios")).json()
             names = [s["name"] for s in scenarios["scenarios"]]
-            assert names == ["honest", "cheat"]
+            assert names == ["honest", "cheat", "forged", "outside"]
             assert scenarios["modes"] == ["auto", "live", "scripted"]
 
     asyncio.run(go())
@@ -90,6 +90,20 @@ def test_unknown_run_is_404():
 
 
 # ------------------------------------------------------------------ full runs
+
+
+def test_forged_run_over_the_api_reports_rejected_identity():
+    async def go() -> None:
+        async with make_client() as client:
+            created = (await client.post("/api/runs", json={"scenario": "forged", "mode": "scripted"})).json()
+            snap = await wait_for(client, created["run_id"])
+            assert snap["outcome"] == "rejected_identity", snap
+            assert snap["error"] is None
+            rows = (await client.get("/api/ledger")).json()["rows"]
+            assert [r["check"] for r in rows if r["kind"] == "identity"] == ["verified", "rejected"]
+            assert not any(r["kind"] == "paypal" for r in rows)
+
+    asyncio.run(go())
 
 
 def test_honest_run_over_the_api_settles():

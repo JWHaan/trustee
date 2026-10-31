@@ -16,6 +16,10 @@ export interface Row {
   order_id: string;
   sha: string;
   note: string;
+  signer: string;
+  check: "verified" | "rejected" | "";
+  link: string;
+  wait_s: string;
 }
 
 export interface Snapshot {
@@ -29,10 +33,11 @@ export interface Snapshot {
   turns: number;
   contract: Record<string, string> | null;
   escrow: { order_id: string; authorization_id: string | null; status: string; approve_url: string | null } | null;
-  ruling: { decision: string; clause: string; reasoning: string } | null;
+  ruling: { decision: string; clause: string; reasoning: string; objective?: boolean } | null;
   attest: { verdict: string; reason: string; evidence: Record<string, string> } | null;
   error: string | null;
   fallback_from: string | null;
+  outcome: string | null;
   events: number;
 }
 
@@ -45,6 +50,19 @@ export interface ScenarioInfo {
   budget: string;
   opening: string;
   cheat: boolean;
+  attack: string | null;
+  flow: string;
+}
+
+export interface Health {
+  ok: boolean;
+  paypal: "sandbox" | "dry-run";
+}
+
+export async function fetchHealth(): Promise<Health> {
+  const res = await fetch("/healthz");
+  if (!res.ok) throw new Error(`healthz: ${res.status}`);
+  return (await res.json()) as Health;
 }
 
 export async function fetchScenarios(): Promise<ScenarioInfo[]> {

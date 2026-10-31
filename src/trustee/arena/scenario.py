@@ -31,6 +31,9 @@ class Scenario:
     budget: Decimal  # buyer's mandate ceiling for this deal
     cheat: bool  # ship the corrupt twin
     transcript: str  # stem under fixtures/transcripts/
+    attack: str | None = None  # e.g. "forged_signature"; None for an ordinary run
+    flow: str = "negotiated"  # "negotiated" (in-process agents) | "outside" (agents driving /v1 over HTTP)
+    agreed_price: Decimal | None = None  # outside flow: the price agreed off-platform
 
     @property
     def opening_price(self) -> Decimal:
@@ -50,6 +53,9 @@ def _parse(raw: dict) -> Scenario:
         budget=Decimal(str(raw["budget"])),
         cheat=bool(raw["cheat"]),
         transcript=raw["transcript"],
+        attack=raw.get("attack"),
+        flow=raw.get("flow", "negotiated"),
+        agreed_price=Decimal(str(raw["agreed_price"])) if raw.get("agreed_price") else None,
     )
 
 

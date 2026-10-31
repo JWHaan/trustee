@@ -1,4 +1,6 @@
-import type { Row, Snapshot } from "./api";
+import { useEffect, useState } from "react";
+import { fetchHealth, type Health, type Row, type Snapshot } from "./api";
+import { pendingApproval } from "./describe";
 
 type Status = "todo" | "active" | "done" | "failed";
 
@@ -29,19 +31,21 @@ function build(rows: Row[], snap: Snapshot | null, running: boolean): Stage[] {
     rows.find((r) => r.kind === "msg" && r.event === "attestation");
 
   const terminal = snap?.state === "SETTLED" || snap?.state === "VOIDED";
+  const forged = snap?.outcome === "rejected_identity";
+  const waiting = pendingApproval(rows, running) !== null;
 
   const stages: Stage[] = [
     {
       key: "agree",
       label: "negotiate",
-      status: has((r) => r.kind === "msg" && r.event === "offer") ? "done" : "todo",
+      status: has((r) => r.kind === "msg" && (r.event === "offer" || r.event === "agreed")) ? "done" : "todo",
       detail: snap?.turns ? `${snap.turns} moves` : "",
     },
     {
       key: "contract",
       label: "contract",
-      status: has((r) => r.kind === "msg" && r.event === "contract_formed") ? "done" : "todo",
-      detail: snap?.price ? `$${Number(snap.price).toFixed(2)}` : "",
+      status: forged ? "failed" : has((r) => r.kind === "msg" && r.event === "contract_formed") ? "done" : "todo",
+      detail: forged ? "forged signature" : snap?.price ? `$${Number(snap.price).toFixed(2)}` : "",
     },
     {
       key: "mandate",
@@ -52,8 +56,8 @@ function build(rows: Row[], snap: Snapshot | null, running: boolean): Stage[] {
     {
       key: "escrow",
       label: "escrow",
-      status: money("authorize") ? "done" : "todo",
-      detail: escrow?.order_id ? escrow.order_id.slice(0, 14) : "",
+      status: waiting ? "active" : money("authorize") && !pendingApprovalOpen(rows) ? "done" : "todo",
+      detail: waiting ? "awaiting approval" : escrow?.order_id ? escrow.order_id.slice(0, 14) : "",
     },
     {
       key: "deliver",
@@ -80,7 +84,7 @@ function build(rows: Row[], snap: Snapshot | null, running: boolean): Stage[] {
     const next = stages.find((s) => s.status === "todo");
     if (next) next.status = "active";
   }
-  if (!running && terminal) {
+  if (!running && terminal && !snap?.outcome?.startsWith("approval_")) {
     stages.forEach((s) => {
       if (s.status === "todo") s.status = "done";
     });
@@ -88,8 +92,30 @@ function build(rows: Row[], snap: Snapshot | null, running: boolean): Stage[] {
   return stages;
 }
 
+/** The Trustee's authorize row exists as soon as the order does; with approval it holds nothing yet. */
+function pendingApprovalOpen(rows: Row[]): boolean {
+  return rows.some((r) => r.kind === "run" && r.event === "awaiting_approval") && !rows.some((r) => r.kind === "state" && (r.state_to === "ESCROWED" || r.state_to === "VOIDED"));
+}
+
+function signatures(rows: Row[]): { text: string; tone: "ok" | "bad" | "idle" } {
+  const ids = rows.filter((r) => r.kind === "identity");
+  const bad = ids.filter((r) => r.check === "rejected").length;
+  const ok = ids.filter((r) => r.check === "verified").length;
+  if (bad) return { text: "forged — rejected", tone: "bad" };
+  if (ok) return { text: `${ok}/4 verified`, tone: "ok" };
+  return { text: "—", tone: "idle" };
+}
+
 export function TrustStrip({ rows, snap, running }: Props) {
   const stages = build(rows, snap, running);
+  const sig = signatures(rows);
+  const [health, setHealth] = useState<Health | null>(null);
+  useEffect(() => {
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, []);
+
   return (
     <div className="stepper" aria-label="money path">
       {stages.map((s) => (
@@ -99,6 +125,16 @@ export function TrustStrip({ rows, snap, running }: Props) {
           <span className="detail">{s.detail}</span>
         </div>
       ))}
+      <div className="strip-chips">
+        <span className={`chip-static sig ${sig.tone}`} title="Ed25519 signatures the Trustee checked">
+          signatures: {sig.text}
+        </span>
+        {health ? (
+          <span className={`chip-static paypal ${health.paypal}`} title="PayPal mode of this server">
+            PayPal: {health.paypal}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

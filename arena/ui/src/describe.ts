@@ -8,8 +8,35 @@ const ACTOR_LABEL: Record<string, string> = {
   arena: "arena",
 };
 
+// Outside agents get a per-run suffix (northwind-planner-1a2b3c4d), so they match on prefix.
+const ACTOR_PREFIX: [string, string][] = [
+  ["northwind-planner", "northwind"],
+  ["tidewater-sales", "tidewater"],
+];
+
 export function actorName(actor: string): string {
-  return ACTOR_LABEL[actor] ?? actor;
+  const exact = ACTOR_LABEL[actor];
+  if (exact) return exact;
+  return ACTOR_PREFIX.find(([prefix]) => actor.startsWith(prefix))?.[1] ?? actor;
+}
+
+/** Only an https link is ever rendered as an anchor. */
+export function safeLink(url: string): string | null {
+  return /^https:\/\//i.test(url) ? url : null;
+}
+
+/**
+ * The run is standing at PayPal when its latest approval row has no later money or state row:
+ * once the payer approves (authorize) or the wait ends (VOIDED) the tape moves on.
+ */
+export function pendingApproval(rows: Row[], running: boolean): Row | null {
+  if (!running) return null;
+  let at = -1;
+  rows.forEach((r, i) => {
+    if (r.kind === "run" && r.event === "awaiting_approval" && r.link) at = i;
+  });
+  if (at < 0) return null;
+  return rows.slice(at + 1).some((r) => r.kind === "paypal" || r.kind === "state") ? null : rows[at];
 }
 
 export function money(value: string): string {
@@ -59,6 +86,18 @@ export function describe(row: Row): Line {
       default:
         return { headline: row.event || "message", detail: note };
     }
+  }
+
+  if (row.kind === "identity") {
+    const who = actorName(row.signer || row.actor);
+    return row.check === "rejected"
+      ? { headline: `SIGNATURE REJECTED — ${who}`, detail: note }
+      : { headline: `signature verified — ${who}`, detail: note };
+  }
+
+  if (row.kind === "api") {
+    const status = note.split(" ")[0];
+    return { headline: `${row.event} → ${status}`, detail: note.slice(status.length).trim() };
   }
 
   if (row.kind === "mandate") {

@@ -11,7 +11,8 @@ import {
 import { LedgerGrid } from "./LedgerGrid";
 import { Transcript } from "./Transcript";
 import { TrustStrip } from "./TrustStrip";
-import { money } from "./describe";
+import { ApprovalBanner } from "./Approval";
+import { money, pendingApproval } from "./describe";
 
 const MODE_LABEL: Record<string, string> = {
   auto: "auto (live → scripted)",
@@ -26,7 +27,6 @@ export default function App() {
   const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
   const [mode, setMode] = useState<Mode>("auto");
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
 
@@ -79,7 +79,16 @@ export default function App() {
   }, [scenarios, run]);
 
   const active = scenarios.find((s) => s.name === (snap?.scenario ?? scenarios[0]?.name));
-  const verdict = snap && (snap.state === "SETTLED" || snap.state === "VOIDED") ? snap.state : null;
+  const outcome = snap?.outcome ?? null;
+  const unapproved = outcome === "approval_timeout" || outcome === "approval_cancelled";
+  const verdict =
+    outcome === "rejected_identity"
+      ? "REJECTED"
+      : snap && (snap.state === "SETTLED" || snap.state === "VOIDED")
+        ? snap.state
+        : null;
+  const rejection = rows.find((r) => r.kind === "identity" && r.check === "rejected");
+  const approving = pendingApproval(rows, running);
 
   return (
     <div className="shell">
@@ -94,7 +103,7 @@ export default function App() {
           ) : snap?.effective_mode ? (
             <span className={`pill ${snap.effective_mode}`}>{snap.effective_mode}</span>
           ) : null}
-          <span className="pill">{running ? "running" : snap?.state ?? "idle"}</span>
+          <span className="pill">{running ? "running" : snap?.outcome ?? snap?.state ?? "idle"}</span>
         </div>
       </header>
 
@@ -110,14 +119,24 @@ export default function App() {
           {verdict ? (
             <div className={`verdict ${verdict === "SETTLED" ? "good" : "bad"}`}>
               <div className="big">
-                {verdict === "SETTLED" ? "settled — funds captured to seller" : "voided — buyer refunded"}
+                {verdict === "SETTLED"
+                  ? "settled — funds captured to seller"
+                  : verdict === "REJECTED"
+                    ? "rejected — forged signature, no money moved"
+                    : unapproved
+                      ? "voided — the buyer never approved, nothing was charged"
+                      : "voided — buyer refunded"}
               </div>
               <div className="why">
                 {verdict === "SETTLED"
                   ? snap?.attest?.reason ?? "delivery attested against the contract clauses"
-                  : snap?.ruling?.reasoning ?? snap?.attest?.reason ?? "escrow released"}
+                  : verdict === "REJECTED"
+                    ? rejection?.note ?? "the signature did not match the registered key"
+                    : snap?.ruling?.reasoning ?? snap?.attest?.reason ?? "escrow released"}
               </div>
-              {snap?.ruling ? (
+              {verdict === "REJECTED" ? (
+                <div className="clause">PayPal was never called · signer: {rejection?.signer ?? "unknown"}</div>
+              ) : snap?.ruling ? (
                 <div className="clause">
                   clause: {snap.ruling.clause} · ruling: {snap.ruling.decision}
                   {snap.ruling.objective ? " (objective)" : " (judged)"}
@@ -125,6 +144,8 @@ export default function App() {
               ) : null}
             </div>
           ) : null}
+
+          {approving ? <ApprovalBanner row={approving} /> : null}
 
           {error ? (
             <div className="verdict bad">
@@ -139,17 +160,9 @@ export default function App() {
         <section className="panel">
           <div className="panel-head">
             <span>ledger tape</span>
-            <input
-              className="filter"
-              placeholder="filter…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              spellCheck={false}
-              aria-label="filter ledger"
-            />
             <span className="count">{rows.length} rows</span>
           </div>
-          <LedgerGrid rows={rows} quickFilter={filter} />
+          <LedgerGrid rows={rows} />
         </section>
       </main>
 
@@ -157,7 +170,7 @@ export default function App() {
         {scenarios.map((s) => (
           <button
             key={s.name}
-            className={s.cheat ? "danger" : "primary"}
+            className={s.cheat || s.attack ? "danger" : "primary"}
             onClick={() => void run(s.name)}
             disabled={running}
             title={s.blurb}

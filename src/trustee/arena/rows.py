@@ -28,6 +28,10 @@ COLUMNS = (
     "order_id",
     "sha",
     "note",
+    "signer",
+    "check",
+    "link",
+    "wait_s",
 )
 
 
@@ -42,6 +46,7 @@ def to_row(ev: Event, seq: int) -> dict[str, Any]:
     note = p.get("note") or p.get("reasoning") or p.get("explanation") or p.get("reason") or ""
     if not note and ev.kind == "mandate":
         note = p.get("report", "")
+    identity = ev.kind == "identity"
     return {
         "id": f"{ev.deal_id or 'run'}:{seq}",
         "seq": seq,
@@ -58,4 +63,10 @@ def to_row(ev: Event, seq: int) -> dict[str, Any]:
         "order_id": str(p.get("order_id") or ""),
         "sha": str(p.get("sha256") or "")[:16],
         "note": str(note)[:220],
+        # Additive columns. `check` is the Trustee's verdict on a signature; `link` is a
+        # payer-approval URL; `wait_s` is how long the arena will wait for that approval.
+        "signer": str(p.get("signer") or "") if identity else "",
+        "check": ("verified" if p.get("ok") else "rejected") if identity else "",
+        "link": str(p.get("approve_url") or p.get("link") or ""),
+        "wait_s": str(p.get("wait_s") or ""),
     }

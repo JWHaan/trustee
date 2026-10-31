@@ -22,11 +22,14 @@ import itertools
 import json
 import logging
 import os
+import threading
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -118,6 +121,7 @@ class RunRecord:
                 "attest": None,
                 "error": self.error,
                 "fallback_from": None,
+                "outcome": None,
             }
         )
         base["events"] = len(self.rows)
@@ -151,6 +155,43 @@ class Registry:
 
     def __len__(self) -> int:
         return len(self._runs)
+
+
+class ApprovalRegistry:
+    """PayPal order ids that belong to arena runs, so the return/cancel redirects can find them.
+
+    `track` is called by a run waiting for its buyer; `release` when the wait ends. A released
+    order stays known (bounded), so a late redirect from PayPal still lands on the arena page."""
+
+    def __init__(self, cap: int = 200):
+        self._orders: OrderedDict[str, threading.Event] = OrderedDict()
+        self._cap = cap
+        self._lock = threading.Lock()
+
+    def track(self, order_id: str) -> threading.Event:
+        with self._lock:
+            event = self._orders.setdefault(order_id, threading.Event())
+            while len(self._orders) > self._cap:
+                self._orders.popitem(last=False)
+            return event
+
+    def release(self, order_id: str) -> None:  # kept on purpose, see class docstring
+        return None
+
+    def owns(self, order_id: str) -> bool:
+        with self._lock:
+            return order_id in self._orders
+
+    def cancel(self, order_id: str) -> None:
+        with self._lock:
+            event = self._orders.get(order_id)
+        if event is not None:
+            event.set()
+
+
+def _default_self_client() -> httpx.Client:
+    base = os.environ.get("ARENA_SELF_URL") or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
+    return httpx.Client(base_url=base, timeout=30.0)
 
 
 # ---------------------------------------------------------------------- models
@@ -221,6 +262,7 @@ def create_app(
     paypal: PayPalClient | None = None,
     ui_dir: Path | None = None,
     service: DealService | None = None,
+    self_client: Callable[[], httpx.Client] | None = None,
 ) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> Any:
@@ -250,7 +292,6 @@ def create_app(
             cancel_url=cancel_url or "https://example.com/paypal/cancel",
         )
     )
-    runner = DealRunner(ledger=ledger, paypal=paypal)
     if service is None:
         # The platform keeps its own ledger so arena replays never land in the durable store.
         service = DealService(
@@ -259,6 +300,17 @@ def create_app(
             Ledger(),
             operator_token=operator_token_from_env(),
         )
+    approvals = ApprovalRegistry()
+    runner = DealRunner(
+        ledger=ledger,
+        paypal=paypal,
+        # The `outside` scenario calls this app's own /v1 API over HTTP; tests inject a TestClient.
+        self_client=self_client if self_client is not None else _default_self_client,
+        close_self_client=self_client is None,
+        platform_ledger=service.ledger,
+        operator_token=service.operator_token,
+        approvals=approvals,
+    )
     registry = Registry()
     tasks: set[asyncio.Task[None]] = set()
 
@@ -267,7 +319,8 @@ def create_app(
     app.state.runner = runner
     app.state.registry = registry
     app.state.service = service
-    app.include_router(build_router(service))
+    app.state.approvals = approvals
+    app.include_router(build_router(service, approvals))
 
     # ---------------------------------------------------------------- routes
 
@@ -334,6 +387,8 @@ def create_app(
                     "budget": str(s.budget),
                     "opening": str(s.opening_price),
                     "cheat": s.cheat,
+                    "attack": s.attack,
+                    "flow": s.flow,
                 }
                 for s in load_scenarios().values()
             ],

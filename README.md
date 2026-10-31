@@ -41,11 +41,14 @@ no-ops — funds can never double-settle or strand.
 |---|---|
 | ![honest run](docs/arena-honest.png) | ![cheat run](docs/arena-cheat.png) |
 
+> These two screenshots predate the identity column, the signature/PayPal chips, the kind filter and the
+> approval banner. They are kept as-is and need re-shooting.
+
 ## Run it
 
 ```bash
 uv sync --extra dev
-uv run pytest                       # 219 tests, dry-run: no credentials needed
+uv run pytest                       # 259 tests, dry-run: no credentials needed
 
 # the judge's no-UI path — full ledger to stdout, exits non-zero if the deal
 # doesn't reach the expected terminal state
@@ -58,8 +61,8 @@ uv run python -m uvicorn trustee.arena.api:app --port 8000
 open http://127.0.0.1:8000
 ```
 
-The page runs the honest deal on load, then gives you two buttons and a mode
-selector. No account, no login, no setup.
+The page runs the honest deal on load, then gives you one button per scenario and a
+mode selector. No account, no login, no setup.
 
 > Use `python -m uvicorn`, not bare `uvicorn` — the bare name resolves a global
 > install and will not see this project's package.
@@ -80,6 +83,33 @@ already emitted, then fed live, so refreshing mid-run shows the same tape in
 the same order. Runs execute on a worker thread (`asyncio.to_thread`) because
 the agents are synchronous; ledger callbacks are marshalled back onto the event
 loop with `call_soon_threadsafe`.
+
+**Scenarios.** Four, all in `fixtures/scenarios.json`:
+
+| Scenario | What it proves | Ends |
+|---|---|---|
+| `honest` | Negotiated deal, machine-checked delivery, capture. | `SETTLED` |
+| `cheat` | A junk delivery fails the hash and schema checks; the arbiter cites the clause and voids. | `VOIDED` |
+| `forged` | Someone who is not Tidewater signs the contract as Tidewater (an unregistered key). Trustee rejects it with `rejected_identity` before PayPal is called: zero PayPal requests. | `outcome: rejected_identity` |
+| `outside` | Northwind's and Tidewater's agents act as outside clients of this server's own public `/v1` API (registration, signed mandates, contract, delivery, attestation), each HTTP call shown as an `api` row next to the platform's own rows. | `SETTLED` |
+
+The grid has `signer` and `check` columns (`verified` / `rejected`) for every signature the Trustee checks,
+kind filter chips and a search box. A forged signature turns its row red. The strip shows a `signatures` chip and
+whether PayPal is `sandbox` or `dry-run`.
+
+`outside` calls the arena's own `/v1` over a real socket: `http://127.0.0.1:$PORT` by default (`PORT`, default
+8000), or `ARENA_SELF_URL` if the server is reachable under another address. It sends `TRUSTEE_OPERATOR_TOKEN`
+when one is set. Its agents get a fresh id and key per run (`northwind-planner-<run>`, `tidewater-sales-<run>`).
+
+**Approving in the PayPal sandbox.** With sandbox credentials, no scenario holds funds until the buyer approves. The
+run stops at `CONTRACTED`, writes an `awaiting_approval` row carrying the approve link and shows an
+"Approve in PayPal sandbox" button with a countdown. The arena polls PayPal every `ARENA_APPROVAL_POLL_SECONDS`
+(default 3); once the order is `APPROVED` the run continues to delivery and attestation. No approval within
+`ARENA_APPROVAL_TIMEOUT_SECONDS` (default 300), or a click on cancel in PayPal, voids the deal with no money call
+(`outcome: approval_timeout` / `approval_cancelled`). PayPal's return and cancel redirects for an arena order
+(`/v1/paypal/return`, `/v1/paypal/cancel`) answer `303` to `/`; cancel also ends that run's wait. Set
+`TRUSTEE_PUBLIC_URL` (or `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL`) so PayPal can send the buyer back. This path is
+tested against a mocked PayPal only, like the rest of the sandbox flow.
 
 **Modes.** `auto` (default) tries the live model and falls back to a recorded
 transcript, saying so on the tape. `live` fails loudly — that is the mode you
@@ -194,8 +224,8 @@ src/trustee/
     rows.py          ledger Event -> grid row
     fixtures/        goods store, manifest, scenarios, transcripts, CLI runners
 arena/ui/            Vite + React + AG Grid Community
-tests/               219 tests: agents, runner, API, SSE, PayPal request shapes, money path,
-                     identity, mandates, store, platform API, approval, webhooks
+tests/               259 tests: agents, runner, API, SSE, PayPal request shapes, money path,
+                     identity, mandates, store, platform API, approval, webhooks, arena scenarios
 ```
 
 ## Configuration
@@ -211,6 +241,8 @@ tests/               219 tests: agents, runner, API, SSE, PayPal request shapes,
 | `LLM_API_KEY` | empty | empty ⇒ scripted mode |
 | `LLM_MODEL` | `meta/llama-3.1-70b-instruct` | |
 | `TRUSTEE_LEDGER_PATH` | in-memory | JSONL durability when set |
+| `ARENA_APPROVAL_POLL_SECONDS` / `ARENA_APPROVAL_TIMEOUT_SECONDS` | `3` / `300` | how the arena waits for the buyer to approve in PayPal |
+| `ARENA_SELF_URL` | `http://127.0.0.1:$PORT` | where the `outside` scenario reaches the arena's own `/v1` API |
 | `TRUSTEE_DB_PATH` etc. | | see [Platform API](#platform-api-a2a) |
 
 ## Demo plan (≤3 min)
@@ -222,6 +254,18 @@ tests/               219 tests: agents, runner, API, SSE, PayPal request shapes,
    contracted file name: a renamed column, 312 rows, reused order ids. The sha256
    fails, the arbiter cites "sha256 matches contract", escrow voids. Northwind keeps
    its money. *That* is why the trust layer exists.
+3. **Forged run** (20 s) — "Impostor seller". Someone signs as Tidewater with a key
+   nobody registered. Point at the red `SIGNATURE REJECTED` row and the
+   `signatures: forged — rejected` chip: the Trustee refuses before any money moves,
+   and the tape has no PayPal rows.
+4. **Outside agents** (30 s) — two agents that live on their own servers register,
+   sign mandates and a contract and settle through `/v1`. Filter the grid to `api` to
+   see each HTTP call, then to `identity` to see the four verified signatures.
+
+With sandbox credentials, run the honest scenario once more live for the real-money-path
+step: the page shows "waiting for buyer approval" and the **Approve in PayPal sandbox**
+button. Approve as the sandbox buyer; the hold, delivery check and capture follow on the
+tape. It is test money, and the page says so.
 
 ## Status
 
