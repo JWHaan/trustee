@@ -66,6 +66,16 @@ services:
       # from the Render dashboard when you need it, and never commit it.
       - key: TRUSTEE_OPERATOR_TOKEN
         generateValue: true
+      # --- Human-not-present payments (docs/AUTONOMY.md).
+      # Signs settlement receipts. base64 of a 32-byte Ed25519 private key; with none set Trustee keeps a
+      # generated key in its store, which on this free plan (in-memory store) changes on every restart. Set it
+      # to keep receipts verifiable across restarts.
+      - key: TRUSTEE_SIGNING_KEY
+        sync: false
+      # A PayPal Vault payment-token id (a SECRET) from the one-time consent of your sandbox buyer. With it the
+      # arena's runs against the sandbox pay with no approval click. Unset: they ask for approval, as before.
+      - key: PAYPAL_DEMO_VAULT_ID
+        sync: false
       # --- Human alerts (Zapier "Catch Hook"). Leave the URL empty to turn them off.
       #     See docs/ZAPIER.md. Arena demo runs stay silent unless TRUSTEE_ALERT_ARENA=1.
       - key: TRUSTEE_ALERT_WEBHOOK_URL

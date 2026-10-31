@@ -20,13 +20,23 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from ..intent import IntentMandate
 from ..platform.service import DealService, ServiceError
-from ..platform.wire import AgentIn, MandateIn, PrincipalIn, mandate_from_in
+from ..platform.wire import AgentIn, FundingSetupIn, MandateIn, PrincipalIn, mandate_from_in
 from ..protocol import Attest, Contract, Delivery
 from .models import Message, Role, data_part, invalid_params, invalid_params_from, new_id, text_part
 
 
 class RevokeSkillIn(BaseModel):
+    agent_id: str
+    signature: str
+
+
+class RegisterFundingIn(FundingSetupIn):
+    principal: str
+
+
+class RevokeIntentIn(BaseModel):
     agent_id: str
     signature: str
 
@@ -89,6 +99,18 @@ def _revoke_mandate(svc: DealService, body: RevokeSkillIn, auth: str | None) -> 
     return svc.revoke_mandate(body.agent_id, body.signature)
 
 
+def _publish_intent(svc: DealService, body: IntentMandate, auth: str | None) -> dict[str, Any]:
+    return svc.publish_intent(body)
+
+
+def _revoke_intent(svc: DealService, body: RevokeIntentIn, auth: str | None) -> dict[str, Any]:
+    return svc.revoke_intent(body.agent_id, body.signature)
+
+
+def _register_funding(svc: DealService, body: RegisterFundingIn, auth: str | None) -> dict[str, Any]:
+    return svc.begin_funding(body.principal, body.nonce, body.signature, body.funding_ref)
+
+
 def _open_escrow(svc: DealService, body: Contract, auth: str | None) -> dict[str, Any]:
     _, created = svc.open_deal(body)
     return {"created": created}
@@ -141,6 +163,33 @@ SKILLS: dict[str, Skill] = {
             RevokeSkillIn,
             '{"agent_id": str, "signature": b64 principal signature over {"revoke": agent_id}}',
             _revoke_mandate,
+        ),
+        Skill(
+            "register-funding",
+            "Start the one-time PayPal consent that vaults the principal's payment method; returns a funding_ref "
+            "and the link to open once (REST: POST /v1/principals/{principal}/funding).",
+            RegisterFundingIn,
+            '{"principal": str, "nonce": str, "funding_ref"?: str, "signature": b64 principal signature over '
+            '{"action": "funding_setup", "principal", "nonce", "funding_ref"}}',
+            _register_funding,
+        ),
+        Skill(
+            "publish-intent",
+            "Publish a principal-signed intent mandate: the human's instruction and the limits for paying "
+            "without per-purchase approval (REST: POST /v1/intents).",
+            IntentMandate,
+            '{"agent_id", "principal", "instruction", "funding_ref", "max_price", "allowed_sellers"?, "good_ids"?, '
+            '"required_criteria"?, "max_total"?, "max_purchases"?, "window_seconds"?, "expires_at"?, '
+            '"principal_signature"}',
+            _publish_intent,
+        ),
+        Skill(
+            "revoke-intent",
+            "Revoke an agent's intent mandate; the principal signs {revoke_intent: agent_id} "
+            "(REST: POST /v1/intents/{agent_id}/revoke).",
+            RevokeIntentIn,
+            '{"agent_id": str, "signature": b64 principal signature over {"revoke_intent": agent_id}}',
+            _revoke_intent,
         ),
         Skill(
             "open-escrow",

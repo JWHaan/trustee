@@ -263,15 +263,65 @@ Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#t
 
 Setup, usage sketches and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
 
+## Autonomous payments: consent once, then no clicks
+
+"Buy this for me" should not mean "approve every payment". Trustee implements the AP2 human-not-present pattern
+([docs/AUTONOMY.md](docs/AUTONOMY.md)): the human consents **once**, and the agent pays by itself inside limits that
+Trustee enforces deterministically.
+
+1. **One PayPal consent.** The principal approves a PayPal Vault consent a single time. Trustee keeps the resulting
+   payment token server side and hands out only an opaque `funding_ref`. The vault id is never returned, logged or
+   written to a receipt.
+2. **One signed intent mandate.** The principal signs the human's own sentence ("Buy Tidewater's Q3 2026 returns
+   dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256") together
+   with the limits derived from it. A model may *propose* those limits from the sentence; code checks the proposal
+   against the words, and only the principal's key makes it binding.
+3. **Every purchase is checked.** Fourteen rules run on each contract (signature chain, expiry, revocation, seller,
+   item, price, budget, velocity, required criteria, currency, funding). Each result is a `policy` row on the ledger.
+   All pass: the funds are held with no click (PayPal `vault_id`, still `AUTHORIZE`: capture waits for verified
+   delivery, and the intent is re-checked at capture). A hard violation (forged, revoked, expired, wrong seller) is
+   refused before PayPal. A soft overrun (price above the signed cap, unknown item) **steps up** to a human approval.
+4. **Everything is provable.** The ledger is hash-chained per deal and every finished deal gets an Ed25519-signed
+   settlement receipt. Check one offline, trusting no server:
+
+```bash
+curl -s $TRUSTEE/v1/deals/$DEAL/receipt > receipt.json
+curl -s "$TRUSTEE/v1/deals/$DEAL/events?limit=1000" > events.json
+python -m trustee.verify receipt.json --key $TRUSTEE/.well-known/trustee-key.json --events events.json
+```
+
+| Endpoint | Who signs | Purpose |
+|---|---|---|
+| `POST /v1/principals/{p}/funding` | principal | start the one-time PayPal consent; returns `funding_ref` and the link to open once |
+| `GET /v1/funding/return` | n/a (PayPal redirect) | vaults the payment method after the consent |
+| `POST /v1/principals/{p}/funding/{ref}/revoke` | principal | revoke a funding source; later purchases step up |
+| `POST /v1/intents`, `POST /v1/intents/{agent_id}/revoke` | principal | publish / revoke the signed intent mandate |
+| `GET /v1/deals/{id}/receipt`, `POST /v1/receipts/verify` | n/a | the signed settlement receipt, and a server-side check of one |
+| `GET /.well-known/trustee-key.json` | n/a | the public key that signs receipts (also in the Agent Card) |
+
+A2A skills: `register-funding`, `publish-intent`, `revoke-intent`. Arena: scenarios `honest`, `cheat`, `outside` and
+`a2a` now pay under the intent mandate (dry-run: always; sandbox: with `PAYPAL_DEMO_VAULT_ID`), and `overreach` shows
+the agent being refused permission to spend above its instruction. Without an intent mandate every flow behaves as
+before.
+
+| Var | Default | Meaning |
+|---|---|---|
+| `TRUSTEE_SIGNING_KEY` | generated, kept in the store | base64 Ed25519 private key that signs receipts |
+| `PAYPAL_DEMO_VAULT_ID` | unset | a **secret** Vault payment-token id so sandbox arena runs are autonomous. Never commit it |
+
 ## Layout
 
 ```
 src/trustee/
   protocol.py        offer/contract JSON protocol (the only thing settlement sees)
   mandate.py         AP2-lite mandate engine
+  intent.py          intent mandates (human-not-present): signed instruction + limits, the rule engine, drafting
+  funding.py         vaulted PayPal funding sources behind opaque funding_refs
+  receipts.py        signed settlement receipts and the Trustee signing key
+  verify.py          `python -m trustee.verify`: check a receipt offline
   state.py           deal state machine (guarded, idempotent, transition hook)
   paypal.py          PayPal adapter (authorize/capture/void, approval flow, dry-run)
-  ledger.py          append-only event log with subscribers
+  ledger.py          append-only, hash-chained event log with subscribers
   llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama)
   agents/            trustee, buyer, seller, arbiter
   platform/          public /v1 API, A2A Agent Card, DealService (durable multi-deal host)

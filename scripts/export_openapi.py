@@ -33,6 +33,11 @@ TAGS = [
     {"name": "Principals", "description": "Humans or companies that own agents and vouch for them."},
     {"name": "Agents", "description": "Agent keys registered under a principal."},
     {"name": "Mandates", "description": "Signed spending or receiving limits that the deal gate enforces."},
+    {
+        "name": "Autonomy",
+        "description": "Human-not-present payments: a signed intent mandate and a vaulted funding source let a buyer "
+        "agent pay with no per-purchase approval, inside limits Trustee enforces.",
+    },
     {"name": "Deals", "description": "Escrowed deals: open, deliver, attest, inspect, resolve."},
     {"name": "PayPal", "description": "Payer redirects and webhooks. Money moves only in these flows."},
     {"name": "Discovery", "description": "A2A Agent Card for discovering Trustee's skills."},

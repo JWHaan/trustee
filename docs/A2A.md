@@ -307,3 +307,24 @@ an extension; a client that does not send it sees no change.
 - First contact is trust-on-first-use of the key in the card. Trustee's registered key is the later check on money.
 - The mounted agents are shared: an `a2a` arena run borrows them (`NetworkAgent.session`) and a second run waits.
 - Delivery sends the whole file in one message (capped at 8 MiB); large goods need a URL part instead.
+
+
+## Autonomous payments over A2A (intent mandates)
+
+Three more skills let an agent set up and use human-not-present payments ([AUTONOMY.md](AUTONOMY.md)):
+
+| Skill | Input | Who signs |
+|---|---|---|
+| `register-funding` | `{principal, nonce, funding_ref?, signature}` | the principal, over `{action: funding_setup, principal, nonce, funding_ref}` |
+| `publish-intent` | an intent mandate (the body of `POST /v1/intents`) | the principal, over every field except `principal_signature` |
+| `revoke-intent` | `{agent_id, signature}` | the principal, over `{revoke_intent: agent_id}` |
+
+`register-funding` returns a `funding_ref` and, against real PayPal, `approve_url`: a human opens it once. With an
+intent mandate on file, `open-escrow` for that buyer agent goes straight to `INPUT_REQUIRED` (funds held) with no
+`AUTH_REQUIRED` step; a purchase outside the intent steps up to `AUTH_REQUIRED` as before. The `settlement-receipt`
+artifact carries the same signed receipt as `GET /v1/deals/{id}/receipt` under `signedReceipt`, plus `humanPresent` and
+`intentMandateDigest`. Trustee's receipt-signing key is in the Agent Card (`receiptSigningKey`) and at
+`/.well-known/trustee-key.json`.
+
+Northwind (`python -m trustee.network.northwind`) signs its principal's sentence as an intent mandate before it buys
+when it is given an `instruction`; the `a2a` arena scenario does this, so its deal settles with no approval click.

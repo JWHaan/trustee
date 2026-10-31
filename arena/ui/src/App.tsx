@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import {
   fetchHealth,
   fetchScenarios,
@@ -16,6 +16,7 @@ import { Header } from "./Header";
 import { LedgerGrid } from "./LedgerGrid";
 import { MoneyPanel } from "./MoneyPanel";
 import { ScenarioPicker } from "./ScenarioPicker";
+import { PolicyChecklist } from "./Policy";
 import { Timeline } from "./Timeline";
 import { Transcript } from "./Transcript";
 import { pendingApproval } from "./describe";
@@ -152,6 +153,21 @@ export default function App() {
           {snap.ruling.objective ? " (objective)" : " (judged)"}
         </div>
       ) : null}
+      {snap?.receipt ? (
+        <div className="clause receipt-line">
+          {snap.receipt_verified ? (
+            <span className="badge good">
+              <Check size={11} strokeWidth={3} aria-hidden="true" /> receipt verified
+            </span>
+          ) : (
+            <span className="badge bad">receipt not verified</span>
+          )}{" "}
+          {snap.human_present === false ? "paid under the intent mandate, no human click" : "approved by a human"} ·{" "}
+          <a href={`/api/runs/${snap.run_id}/receipt`} target="_blank" rel="noopener noreferrer">
+            signed receipt (JSON)
+          </a>
+        </div>
+      ) : null}
     </div>
   ) : null;
 
@@ -188,6 +204,8 @@ export default function App() {
         </div>
         <Timeline rows={rows} snap={snap} running={running} />
       </section>
+
+      <PolicyChecklist rows={rows} />
 
       {error ? (
         <div className="toast" role="alert">

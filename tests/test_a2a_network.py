@@ -582,7 +582,7 @@ def test_scenario_a2a_settles_with_a2a_rows_on_the_tape() -> None:
 def test_the_arena_lists_the_a2a_scenario_and_the_other_scenarios_still_run() -> None:
     app, http = arena()
     names = [s["name"] for s in http.get("/api/scenarios").json()["scenarios"]]
-    assert names == ["honest", "cheat", "forged", "outside", "a2a"]
+    assert names == ["honest", "cheat", "forged", "outside", "a2a", "overreach"]
     info = next(s for s in http.get("/api/scenarios").json()["scenarios"] if s["name"] == "a2a")
     assert info["flow"] == "a2a" and info["title"] == "Three A2A agents"
 

@@ -23,18 +23,24 @@ from typing import Any
 
 from ..agents.arbiter import Judge
 from ..agents.trustee import Trustee, TrusteeDecision, is_transient_paypal
-from ..identity import AgentRecord, AgentRegistry, PrincipalRegistry, verify
+from ..funding import FundingError, FundingRegistry
+from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry, verify
+from ..intent import Autonomy, IntentBook, IntentMandate
 from ..ledger import Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine, MandateReplay
 from ..paypal import PayPalClient
 from ..protocol import Attest, Contract, Delivery
+from ..receipts import build_receipt, load_signing_key
 from ..state import Deal, DealState, IllegalTransition
 from ..store import Store, StoreConflict
 from ..sweeper import DeadlineSweeper
 from .wire import (
     ID_PATTERN,
     agent_signing_bytes,
+    funding_revoke_signing_bytes,
+    funding_setup_signing_bytes,
+    intent_revoke_signing_bytes,
     mandate_from_dict,
     mandate_to_dict,
     principal_signing_bytes,
@@ -68,6 +74,7 @@ class DealService:
         judge_factory: Callable[[], Judge] | None = None,
         sweeper: DeadlineSweeper | None = None,
         operator_token: str | None = None,
+        signing_key: AgentKey | None = None,
     ):
         self.store = store
         self.paypal = paypal
@@ -79,6 +86,11 @@ class DealService:
         self.registry = AgentRegistry()
         self.principals = PrincipalRegistry()
         self.mandates = MandateEngine(principals=self.principals)
+        # Human-not-present payments: intent mandates, the vaulted funding sources they name, and Trustee's own key.
+        self.funding = FundingRegistry(store, paypal)
+        self.intents = IntentBook()
+        self.autonomy = Autonomy(self.intents, self.funding, self.principals)
+        self.signing_key = signing_key if signing_key is not None else load_signing_key(store)
         self._deals: dict[str, tuple[Trustee, Contract]] = {}
         self._lock = threading.RLock()
         self._deal_locks: dict[str, threading.RLock] = {}
@@ -113,6 +125,14 @@ class DealService:
             if stored["revoked"]:
                 self.mandates.revoke(row["agent_id"])
                 self._revoked.add(row["agent_id"])
+        for row in self.store.list_intents():
+            try:
+                intent = IntentMandate.model_validate(row["body"])
+            except ValueError:
+                log.warning("stored intent for %s is unreadable; skipped", row["agent_id"])
+                continue
+            self._ensure_principal(intent.principal)
+            self.intents.put(intent, revoked=row["revoked"])
         # Captured deals are spend: without this a restart would hand every budget back.
         for row in self.store.list_deals(states=[DealState.SETTLED.value], limit=1_000_000):
             if row["contract"] is not None:
@@ -132,6 +152,9 @@ class DealService:
         if not trustee.deal.is_terminal:
             if (row["snapshot"].get("escrow") or {}).get("status") == "authorized":
                 self.mandates.reserve(contract)
+                authority = row["snapshot"].get("autonomy") or {}
+                if authority and not authority.get("human_present", True):
+                    self.intents.note_purchase(contract.deal_id, contract.buyer, _parse_when(authority.get("at")))
             self.sweeper.register(trustee, contract)
         return entry
 
@@ -147,6 +170,7 @@ class DealService:
                 ledger=self.ledger,
                 judge=judge,
                 registry=self.registry,
+                autonomy=self.autonomy,
                 on_transition=recorder,
             )
         return Trustee(
@@ -157,6 +181,7 @@ class DealService:
             ledger=self.ledger,
             judge=judge,
             registry=self.registry,
+            autonomy=self.autonomy,
         )
 
     def _state_recorder(self, deal_id: str) -> Callable[[str, str, str], None]:
@@ -308,6 +333,150 @@ class DealService:
             self._revoked.add(agent_id)
         return {"agent_id": agent_id, "revoked": True}
 
+    # ------------------------------------------------------- intents and funding
+
+    def _require_principal_signed(self, principal: str, signature: str, body: bytes, what: str) -> None:
+        if self._ensure_principal(principal) is None:
+            raise ServiceError(404, f"unknown principal {principal!r}: register it first")
+        if not self.principals.verify(principal, signature, body):
+            raise ServiceError(401, f"{what} is not signed by principal {principal!r}")
+
+    def publish_intent(self, intent: IntentMandate) -> dict[str, Any]:
+        """Store a principal-signed intent mandate for one buyer agent. The signature is the authorization."""
+        record = self.registry.get(intent.agent_id)
+        if record is None:
+            raise ServiceError(404, f"unknown agent {intent.agent_id!r}")
+        if record.principal != intent.principal:
+            raise ServiceError(403, f"agent {intent.agent_id!r} belongs to principal {record.principal!r}")
+        if self._ensure_principal(intent.principal) is None or not self.principals.verify(
+            intent.principal, intent.principal_signature, intent.signing_bytes()
+        ):
+            raise ServiceError(401, f"intent mandate is not signed by principal {intent.principal!r}")
+        if not intent.require_escrow or intent.human_present:
+            raise ServiceError(422, "an intent mandate must have require_escrow=true and human_present=false")
+        source = self.store.funding_public(intent.funding_ref)
+        if source is None or source["principal"] != intent.principal or source["revoked"]:
+            raise ServiceError(422, "funding_ref is not an active funding source of this principal")
+        digest = intent.digest()
+        with self._lock:
+            if self.intents.digest_revoked(digest):
+                raise ServiceError(409, "this exact intent mandate was revoked; sign a new one")
+            current = self.intents.get(intent.agent_id)
+            created = current is None or current.digest() != digest
+            if current is not None and created and intent.issued_at <= current.issued_at:
+                raise ServiceError(409, "a newer intent mandate is already on file (replay of an older one)")
+            if created:
+                self.store.put_intent(intent.agent_id, intent.principal, intent.public(), digest)
+                self.intents.put(intent)
+        return {
+            "agent_id": intent.agent_id,
+            "principal": intent.principal,
+            "intent_mandate_digest": digest,
+            "expires_at": intent.expires_at.isoformat() if intent.expires_at else None,
+            "created": created,
+        }
+
+    def revoke_intent(self, agent_id: str, signature: str) -> dict[str, Any]:
+        record = self.registry.get(agent_id)
+        if record is None:
+            raise ServiceError(404, f"unknown agent {agent_id!r}")
+        self._require_principal_signed(
+            record.principal, signature, intent_revoke_signing_bytes(agent_id), "the revocation"
+        )
+        with self._lock:
+            if self.intents.get(agent_id) is None or not self.store.revoke_intent(agent_id):
+                raise ServiceError(404, f"no intent mandate on file for {agent_id!r}")
+            self.intents.revoke(agent_id)
+        return {"agent_id": agent_id, "revoked": True}
+
+    def begin_funding(
+        self, principal: str, nonce: str, signature: str, funding_ref: str | None = None
+    ) -> dict[str, Any]:
+        """Start the one-time PayPal consent for `principal`. In dry-run there is no payer, so it completes at once."""
+        self._require_principal_signed(
+            principal, signature, funding_setup_signing_bytes(principal, nonce, funding_ref), "the funding request"
+        )
+        try:
+            started = self.funding.begin(principal, funding_ref)
+            if started.get("status") == "active":
+                return started
+            if self.paypal.dry_run:
+                info = self.funding.complete(self._setup_token_of(started["funding_ref"]))
+                return {**info, "approve_url": None}
+        except FundingError as exc:
+            raise ServiceError(exc.status, exc.detail) from None
+        return started
+
+    def _setup_token_of(self, funding_ref: str) -> str:
+        info = self.store.funding_public(funding_ref)
+        assert info is not None and info["setup_token_id"]
+        return str(info["setup_token_id"])
+
+    def funding_return(self, setup_token_id: str) -> dict[str, Any]:
+        """The payer came back from the one-time consent. Vaults the payment method; nothing secret is returned."""
+        try:
+            return self.funding.complete(setup_token_id)
+        except FundingError as exc:
+            raise ServiceError(exc.status, exc.detail) from None
+
+    def revoke_funding(self, principal: str, funding_ref: str, signature: str) -> dict[str, Any]:
+        self._require_principal_signed(
+            principal, signature, funding_revoke_signing_bytes(principal, funding_ref), "the revocation"
+        )
+        try:
+            return self.funding.revoke(principal, funding_ref)
+        except FundingError as exc:
+            raise ServiceError(exc.status, exc.detail) from None
+
+    def funding_status(self, funding_ref: str) -> dict[str, Any]:
+        try:
+            return self.funding.status(funding_ref)
+        except FundingError as exc:
+            raise ServiceError(exc.status, exc.detail) from None
+
+    # --------------------------------------------------------------- receipts
+
+    def trustee_key(self) -> dict[str, Any]:
+        return {"algorithm": "Ed25519", "public_key": self.signing_key.public_key_b64, "encoding": "urlsafe-base64"}
+
+    def receipt(self, deal_id: str) -> dict[str, Any]:
+        """The signed settlement receipt of a finished deal (issued on first request if a restart missed it)."""
+        trustee, contract = self._require(deal_id)
+        if not trustee.deal.is_terminal:
+            raise ServiceError(
+                409, f"deal {deal_id} is {trustee.deal.state.value}: no receipt until it is settled or voided"
+            )
+        existing = self.store.get_receipt(deal_id)
+        if existing is not None:
+            return existing
+        return self._issue_receipt(trustee, contract) or self._missing_receipt(deal_id)
+
+    def _missing_receipt(self, deal_id: str) -> dict[str, Any]:
+        raise ServiceError(500, f"could not issue a receipt for {deal_id}")
+
+    def _issue_receipt(self, trustee: Trustee, contract: Contract) -> dict[str, Any] | None:
+        with self._deal_lock(contract.deal_id):
+            existing = self.store.get_receipt(contract.deal_id)
+            if existing is not None:
+                return existing
+            events = self.store.events(contract.deal_id, limit=1_000_000)
+            head = events[-1]["hash"] if events else ""
+            receipt = build_receipt(
+                trustee.snapshot(), contract, key=self.signing_key, ledger_head=head, ledger_events=len(events)
+            )
+            if not self.store.put_receipt(contract.deal_id, receipt):
+                return self.store.get_receipt(contract.deal_id)
+            self.ledger.append(
+                contract.deal_id,
+                "trustee",
+                "receipt",
+                event="receipt_issued",
+                outcome=receipt["outcome"],
+                human_present=receipt["human_present"],
+                note=f"signed {receipt['outcome']} receipt issued; ledger head {head[:12]}",
+            )
+            return receipt
+
     # ------------------------------------------------------------------ deals
 
     def _deal_lock(self, deal_id: str) -> threading.RLock:
@@ -339,6 +508,12 @@ class DealService:
                 self.store.upsert_deal(contract.deal_id, snap["state"], contract.model_dump(mode="json"), snap)
             except Exception:  # noqa: BLE001
                 log.exception("CRITICAL: could not persist deal %s; a restart may lose it", contract.deal_id)
+                return
+            if trustee.deal.is_terminal:
+                try:
+                    self._issue_receipt(trustee, contract)
+                except Exception:  # noqa: BLE001 - the receipt is evidence, not the money path
+                    log.exception("could not issue a receipt for %s", contract.deal_id)
 
     def _index(self, trustee: Trustee, contract: Contract, snap: dict[str, Any] | None = None) -> None:
         escrow = (snap or trustee.snapshot())["escrow"]
@@ -385,6 +560,7 @@ class DealService:
             "snapshot": trustee.snapshot(),
             "contract": contract.model_dump(mode="json"),
             "updated_at": row["updated_at"] if row else None,
+            "receipt": self.store.get_receipt(deal_id) if trustee.deal.is_terminal else None,
         }
 
     @staticmethod
@@ -416,6 +592,7 @@ class DealService:
             "dispute_deadline": snap["dispute_deadline"],
             "needs_attention": snap.get("needs_attention"),
             "history": snap["history"],
+            "authority": _authority_view(snap.get("autonomy")),
         }
 
     def events(self, deal_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
@@ -633,6 +810,25 @@ class DealService:
             except Exception:  # noqa: BLE001 - one bad order must not stop the sweep
                 log.exception("approval poll failed for %s", contract.deal_id)
         return acted
+
+
+def _parse_when(value: Any) -> datetime:
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return datetime.now()
+
+
+def _authority_view(authority: dict[str, Any] | None) -> dict[str, Any]:
+    """Who authorized this payment: a human at PayPal, or the principal's intent mandate. Public, no secrets."""
+    if not authority:
+        return {"human_present": True, "intent_mandate_digest": None, "outcome": "human_approval", "policy": []}
+    return {
+        "human_present": bool(authority.get("human_present", True)),
+        "intent_mandate_digest": authority.get("intent_digest"),
+        "outcome": authority.get("outcome"),
+        "policy": authority.get("policy") or [],
+    }
 
 
 _CAPTURE_EVENTS = frozenset(

@@ -24,7 +24,9 @@ SIGNING_SCHEME = (
     "{agent_id, public_key, principal, roles (sorted), paypal_email} and is vouched for by the principal "
     "signing the same bytes; a mandate is signed by its principal over every field except principal_signature; "
     "a contract carries one signature per party over its sha256 digest; deliveries are signed by the seller and "
-    "attestations by the buyer. Operator endpoints use an HTTP bearer token."
+    "attestations by the buyer; an intent mandate is signed by its principal over every field except "
+    "principal_signature, and funding requests by the principal. Settlement receipts are signed by Trustee "
+    "(key at /.well-known/trustee-key.json). Operator endpoints use an HTTP bearer token."
 )
 
 
@@ -97,6 +99,31 @@ SKILLS: list[dict[str, Any]] = [
         ["Accept the delivery for deal deal_ab12 and release payment"],
     ),
     _skill(
+        "publish-intent",
+        "Publish an intent mandate",
+        "POST /v1/intents: a principal-signed AP2 Intent Mandate (the human's instruction, price and seller limits, "
+        "required criteria, expiry, and a funding_ref). With one on file the buyer agent pays with no approval click, "
+        "within those limits; anything outside them falls back to a human.",
+        ["mandate", "autonomy", "human-not-present"],
+        ["Let buyer-agent buy the returns dataset from tidewater for at most 175 USD without asking me again"],
+    ),
+    _skill(
+        "revoke-intent",
+        "Revoke an intent mandate",
+        "POST /v1/intents/{agent_id}/revoke: the principal signs {revoke_intent: agent_id}. New deals are refused and "
+        "an autonomous deal awaiting delivery is held for a human instead of captured.",
+        ["mandate", "autonomy"],
+        ["Stop buyer-agent from buying anything on my behalf"],
+    ),
+    _skill(
+        "register-funding",
+        "Register a funding source",
+        "POST /v1/principals/{principal}/funding: start the one-time PayPal consent that vaults the principal's "
+        "payment method. Returns a funding_ref (never the vault id) and the link the human opens once.",
+        ["funding", "paypal", "autonomy"],
+        ["Set up a funding source for northwind-outfitters"],
+    ),
+    _skill(
         "get-deal",
         "Get deal state",
         "GET /v1/deals/{id} for state, escrow and ruling; GET /v1/deals/{id}/events for the persisted ledger. "
@@ -120,11 +147,11 @@ _OPERATOR_SCHEME_DESCRIPTION = (
 )
 
 
-def build_agent_card(base_url: str) -> dict[str, Any]:
+def build_agent_card(base_url: str, trustee_key: str | None = None) -> dict[str, Any]:
     base = base_url.rstrip("/")
     api = f"{base}/v1"
     rpc = f"{base}/a2a"
-    return {
+    card = {
         "name": "Trustee",
         "description": (
             "Escrow and arbitration for agent-to-agent payments on PayPal. Two agents sign a contract, Trustee "
@@ -182,3 +209,11 @@ def build_agent_card(base_url: str) -> dict[str, Any]:
         "defaultOutputModes": ["application/json"],
         "skills": SKILLS,
     }
+    if trustee_key:
+        # The key that signs settlement receipts, so a counterparty can verify one without asking the server.
+        card["receiptSigningKey"] = {
+            "algorithm": "Ed25519",
+            "publicKey": trustee_key,
+            "url": f"{base}/.well-known/trustee-key.json",
+        }
+    return card

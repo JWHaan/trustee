@@ -91,6 +91,8 @@ class PayPalClient:
         cancel_url: str = "https://example.com/paypal/cancel",
         webhook_id: str | None = None,
         allow_unverified_webhooks: bool | None = None,
+        vault_return_url: str | None = None,
+        vault_cancel_url: str | None = None,
     ):
         self.base_url = base_url or BASE_URLS[env]
         # `client_id and client_secret` returns "" when both are empty — which is
@@ -109,6 +111,9 @@ class PayPalClient:
             else bool(allow_unverified_webhooks)
         )
         self.cancel_url = cancel_url
+        # Where PayPal sends the payer after the one-time vault consent (see platform/routes.py).
+        self.vault_return_url = vault_return_url or return_url.replace("/paypal/return", "/funding/return")
+        self.vault_cancel_url = vault_cancel_url or cancel_url.replace("/paypal/cancel", "/funding/cancel")
         self._client_id = client_id
         self._client_secret = client_secret
         self._token: str | None = None
@@ -201,8 +206,14 @@ class PayPalClient:
         seller_email: str,
         memo: str,
         request_id: str | None = None,
+        vault_id: str | None = None,
     ) -> EscrowOrder:
         """Create the order and authorize it: funds are HELD, not moved.
+
+        With `vault_id` (a PayPal Vault payment token the payer consented to once, see `create_setup_token`) the order
+        is created with `payment_source.paypal.vault_id`, carries no `experience_context`, and is authorized with no
+        payer action: this is the human-not-present path. No approve link is ever produced for a vaulted order. PayPal
+        may return the authorization inside the create response or only after `POST .../authorize`; both are handled.
 
         Real-sandbox caveat: an AUTHORIZE-intent order must be *approved by the
         payer* before `/authorize` succeeds (PayPal returns 422 ORDER_NOT_APPROVED
@@ -229,7 +240,9 @@ class PayPalClient:
                 }
             ],
         }
-        if self.requires_approval:
+        if vault_id:
+            body["payment_source"] = {"paypal": {"vault_id": vault_id}}
+        elif self.requires_approval:
             body["payment_source"] = {
                 "paypal": {
                     "experience_context": {
@@ -252,6 +265,7 @@ class PayPalClient:
                 authorization_id=f"dry-authz-{uuid.uuid4().hex[:12]}",
                 status="authorized",
                 approve_url=None,
+                details={"funding": "vault"} if vault_id else {},
             )
 
         resp = self._request_with_retry("POST", f"{self.base_url}/v2/checkout/orders", body, request_id=request_id)
@@ -259,6 +273,10 @@ class PayPalClient:
             raise PayPalError(f"order create failed ({resp.status_code})", resp.status_code, resp.text[:500])
         order = resp.json()
         oid = order["id"]
+
+        if vault_id:
+            authz_request_id = f"{request_id[: _REQUEST_ID_MAX - 6]}-authz" if request_id else None
+            return self._vault_authorization(oid, order, authz_request_id)
 
         if self.requires_approval:
             # Funds stay un-held until the payer approves; hand the link back.
@@ -276,6 +294,31 @@ class PayPalClient:
         # Single-shot path: the authorize step gets its own derived, stable id.
         authorize_request_id = f"{request_id[: _REQUEST_ID_MAX - 6]}-authz" if request_id else None
         return self.authorize_after_approval(oid, request_id=authorize_request_id)
+
+    def _vault_authorization(self, order_id: str, created: dict[str, Any], request_id: str | None) -> EscrowOrder:
+        """Finish a vaulted order: take the authorization from the create response, else authorize it now.
+
+        Only the ids and statuses are kept in `details`: the raw responses name the payer's PayPal account and must
+        not be stored or echoed."""
+        authz = _first_authorization(created)
+        if authz is None or not authz.get("id"):
+            resp = self._request_with_retry(
+                "POST",
+                f"{self.base_url}/v2/checkout/orders/{order_id}/authorize",
+                {"note": "trustee escrow hold"},
+                request_id=request_id,
+            )
+            if resp.status_code not in (200, 201):
+                raise PayPalError(f"authorize failed ({resp.status_code})", resp.status_code, resp.text[:500])
+            authz = _first_authorization(resp.json())
+        if authz is None or not authz.get("id"):
+            raise PayPalError("PayPal returned no authorization for the vaulted order")
+        return EscrowOrder(
+            order_id=order_id,
+            authorization_id=str(authz["id"]),
+            status="authorized",
+            details={"funding": "vault", "authorization_status": str(authz.get("status", ""))},
+        )
 
     def authorize_after_approval(self, order_id: str, *, request_id: str | None = None) -> EscrowOrder:
         """Second half of the approval flow: hold the funds once the payer approved."""
@@ -296,6 +339,64 @@ class PayPalClient:
         authz = resp.json()
         authz_id = (authz.get("authorizations") or [{}])[0].get("id", "")
         return EscrowOrder(order_id=order_id, authorization_id=authz_id, status="authorized", details=authz)
+
+    # ------------------------------------------------------------ vault (one-time consent)
+
+    def create_setup_token(self, *, brand_name: str = "Trustee escrow") -> dict[str, Any]:
+        """Start the one-time consent: PayPal returns a setup token and a link the payer approves once.
+
+        `{"setup_token_id", "approve_url", "status"}`. The consent is for MERCHANT use with multiple payment tokens
+        allowed, so later orders can name the saved payment method with no payer action."""
+        if self.dry_run:
+            sid = f"dry-setup-{uuid.uuid4().hex[:12]}"
+            return {
+                "setup_token_id": sid,
+                "approve_url": f"{self.return_url}?approval_token_id={sid}",
+                "status": "DRY_RUN",
+            }
+        body = {
+            "payment_source": {
+                "paypal": {
+                    "usage_type": "MERCHANT",
+                    "customer_type": "CONSUMER",
+                    "permit_multiple_payment_tokens": True,
+                    "experience_context": {
+                        "brand_name": brand_name,
+                        "return_url": self.vault_return_url,
+                        "cancel_url": self.vault_cancel_url,
+                        "shipping_preference": "NO_SHIPPING",
+                    },
+                }
+            }
+        }
+        resp = self._request_with_retry("POST", f"{self.base_url}/v3/vault/setup-tokens", body)
+        if resp.status_code not in (200, 201):
+            raise PayPalError(f"setup token create failed ({resp.status_code})", resp.status_code, resp.text[:500])
+        data = resp.json()
+        approve = next((lnk.get("href") for lnk in data.get("links", []) if lnk.get("rel") == "approve"), None)
+        return {"setup_token_id": str(data["id"]), "approve_url": approve, "status": str(data.get("status", ""))}
+
+    def get_setup_token(self, setup_token_id: str) -> dict[str, Any]:
+        """`{"id", "status"}`; status is APPROVED once the payer consented. Dry-run: always APPROVED."""
+        if self.dry_run:
+            return {"id": setup_token_id, "status": "APPROVED"}
+        resp = self._request_with_retry("GET", f"{self.base_url}/v3/vault/setup-tokens/{setup_token_id}")
+        if resp.status_code != 200:
+            raise PayPalError(f"get setup token failed ({resp.status_code})", resp.status_code, resp.text[:500])
+        data = resp.json()
+        return {"id": str(data.get("id", setup_token_id)), "status": str(data.get("status", ""))}
+
+    def create_payment_token(self, setup_token_id: str) -> str:
+        """Exchange an approved setup token for a payment token. Returns its id: the VAULT ID, a secret."""
+        if self.dry_run:
+            return f"dry-vault-{uuid.uuid4().hex[:12]}"
+        body = {"payment_source": {"token": {"id": setup_token_id, "type": "SETUP_TOKEN"}}}
+        resp = self._request_with_retry(
+            "POST", f"{self.base_url}/v3/vault/payment-tokens", body, request_id=f"trustee-vault-{setup_token_id}"
+        )
+        if resp.status_code not in (200, 201):
+            raise PayPalError(f"payment token create failed ({resp.status_code})", resp.status_code, resp.text[:500])
+        return str(resp.json()["id"])
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         """Read an order, e.g. to poll whether the payer approved it (local dev gets no webhooks)."""
@@ -391,3 +492,12 @@ class PayPalClient:
 
     def close(self) -> None:
         self._http.close()
+
+
+def _first_authorization(order: dict[str, Any]) -> dict[str, Any] | None:
+    """The first authorization in an Orders v2 response's `purchase_units[0].payments.authorizations`, if any."""
+    for unit in order.get("purchase_units") or []:
+        for authz in (unit.get("payments") or {}).get("authorizations") or []:
+            if isinstance(authz, dict):
+                return authz
+    return None

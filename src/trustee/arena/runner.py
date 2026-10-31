@@ -34,6 +34,12 @@ value is in the four things the plan assumed would be free:
    out (`approval.py`). The `outside` flow hands the whole deal to agents that drive the
    public /v1 API over HTTP (`outside.py`).
 
+7. **Human-not-present payments.** A scenario with an `instruction` has the demo principal sign ONE intent mandate on
+   the human's behalf (the tape says so), and vaults a funding source (a fake one in dry-run, the
+   `PAYPAL_DEMO_VAULT_ID` one against the sandbox). From then on the Trustee pays with no approval click, and every
+   rule it applied is a `policy` row. `overreach` shows the other side: a price above the signed cap steps up to a
+   human. A signed settlement receipt closes each run and is verified offline on the tape.
+
 A fallback mints a new deal id rather than replaying over the failed one: a
 half-written tape from a dead live attempt and a complete scripted tape must
 not share a key, or the grid groups two different stories together.
@@ -58,14 +64,19 @@ from ..agents.arbiter import ArbiterAgent
 from ..agents.buyer import ArtifactStore, BuyerAgent
 from ..agents.seller import SellerAgent
 from ..agents.trustee import Trustee, TrusteeDecision, is_transient_paypal
+from ..funding import FundingRegistry
 from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry
+from ..intent import Autonomy, IntentBook, draft_intent, intent_summary
 from ..ledger import Event, Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine
 from ..network import Northwind, Tidewater
 from ..paypal import EscrowOrder, PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Accept, Contract, Counter, Offer
+from ..receipts import build_receipt, load_signing_key
 from ..state import Deal, DealState
+from ..store import Store
+from ..verify import verify_receipt
 from .a2a_flow import A2AFlow
 from .approval import ApprovalGate, ApprovalWait, wait_for_approval
 from .fixtures import load_mandates
@@ -107,6 +118,9 @@ class RunResult:
     error: str | None = None
     fallback_from: str | None = None
     outcome: str | None = None  # why a run ended short of a held escrow, e.g. "rejected_identity"
+    receipt: dict[str, Any] | None = None  # Trustee's signed settlement receipt, once the deal is terminal
+    receipt_verified: bool | None = None  # the receipt checked offline (signature + ledger chain) at the end of the run
+    human_present: bool | None = None  # False when the buyer's agent paid under its intent mandate, no human click
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -125,6 +139,9 @@ class RunResult:
             "error": self.error,
             "fallback_from": self.fallback_from,
             "outcome": self.outcome,
+            "receipt": self.receipt,
+            "receipt_verified": self.receipt_verified,
+            "human_present": self.human_present,
         }
 
 
@@ -147,6 +164,8 @@ class DealRunner:
         approvals: ApprovalGate | None = None,
         approval_wait: ApprovalWait | None = None,
         network: tuple[Northwind, Tidewater] | None = None,
+        signing_key: AgentKey | None = None,
+        demo_funding: Callable[[str], str | None] | None = None,
     ):
         self.ledger = ledger
         self.paypal = paypal
@@ -166,6 +185,12 @@ class DealRunner:
         self.approval_wait = approval_wait if approval_wait is not None else ApprovalWait.from_env()
         # Only the `a2a` flow uses this: the mounted Northwind and Tidewater agents (see a2a_flow.py).
         self.network = network
+        # Signs the settlement receipts of in-process runs. The app passes the platform's key, so every receipt
+        # verifies against /.well-known/trustee-key.json.
+        self.signing_key = signing_key if signing_key is not None else load_signing_key(None)
+        # principal -> funding_ref for the platform flows against the real sandbox (PAYPAL_DEMO_VAULT_ID); dry-run
+        # needs none, the platform vaults a fake source itself.
+        self.demo_funding = demo_funding
 
     # ---------------------------------------------------------------- public
 
@@ -264,7 +289,6 @@ class DealRunner:
         fallback_from: str | None,
         store: ArtifactStore,
     ) -> RunResult:
-        deal_id = deal.deal_id
         if scenario.attack is not None and scenario.attack not in ATTACKS:
             raise ValueError(f"unknown attack {scenario.attack!r} (known: {', '.join(ATTACKS)})")
         llm = self._build_llm(scenario, effective)
@@ -292,6 +316,33 @@ class DealRunner:
 
         ident = self._mint_identity()
         mandates = self._run_mandates(ident)
+        funding_store = Store(":memory:")
+        try:
+            return self._drive_with(
+                scenario, deal, run_id, requested, effective, fallback_from, store, llm, buyer, seller, ident,
+                mandates, funding_store,
+            )  # fmt: skip
+        finally:
+            funding_store.close()
+
+    def _drive_with(
+        self,
+        scenario: Scenario,
+        deal: Deal,
+        run_id: str,
+        requested: str,
+        effective: str,
+        fallback_from: str | None,
+        store: ArtifactStore,
+        llm: LLM,
+        buyer: BuyerAgent,
+        seller: SellerAgent,
+        ident: _RunIdentity,
+        mandates: MandateEngine,
+        funding_store: Store,
+    ) -> RunResult:
+        deal_id = deal.deal_id
+        autonomy = self._grant_intent(scenario, ident, mandates, funding_store, llm, effective, deal_id)
 
         contract, turns = self._negotiate(scenario, buyer, seller, deal_id)
         if contract is None:  # pragma: no cover - the cap always yields a contract
@@ -315,6 +366,7 @@ class DealRunner:
             seller_email=seller_email,
             judge=ArbiterAgent(ARBITER_ID, llm=llm, ledger=self.ledger),
             registry=ident.registry,
+            autonomy=autonomy,
         )
 
         decision = trustee.on_contract(contract)
@@ -339,6 +391,7 @@ class DealRunner:
                 "approval_failed",
             )
             result.error = None if outcome in clean else decision.action
+            self._attach_receipt(result, deal, trustee, contract)
             return result
 
         delivery = seller.deliver(contract, cheat=scenario.cheat).sign(ident.keys[SELLER_ID])
@@ -350,6 +403,7 @@ class DealRunner:
         result = self._result(run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from)
         result.attest = {"verdict": attest.verdict, "reason": attest.reason, "evidence": attest.evidence}
         result.turns = turns
+        self._attach_receipt(result, deal, trustee, contract)
         self.ledger.append(
             deal_id,
             "arena",
@@ -360,6 +414,106 @@ class DealRunner:
             note=f"{effective} run, {turns} negotiation turns",
         )
         return result
+
+    # --------------------------------------------------------------- autonomy
+
+    def _grant_intent(
+        self,
+        scenario: Scenario,
+        ident: _RunIdentity,
+        mandates: MandateEngine,
+        funding_store: Store,
+        llm: LLM,
+        effective: str,
+        deal_id: str,
+    ) -> Autonomy | None:
+        """The one-time consent: vault a funding source, draft the intent from the human's words, sign it once.
+
+        Returns None (and the run takes the human-present path, as before) when the scenario has no instruction,
+        the caller brought its own mandate engine, or there is no funding: against the real sandbox that means
+        PAYPAL_DEMO_VAULT_ID is unset."""
+        if scenario.instruction is None or not self._owns_mandates:
+            return None
+        funding = FundingRegistry(funding_store, self.paypal)
+        principal = "demo-principal"
+        ref = funding.register_fake(principal) if self.paypal.dry_run else funding.register_demo(principal)
+        if ref is None:
+            self.ledger.append(
+                deal_id,
+                "arena",
+                "policy",
+                event="no_funding",
+                note="no vaulted funding source (PAYPAL_DEMO_VAULT_ID is unset): a human approves this payment",
+            )
+            return None
+        draft = draft_intent(
+            scenario.instruction,
+            llm if effective == "live" else None,
+            agent_id=BUYER_ID,
+            principal=principal,
+            funding_ref=ref,
+            good=scenario.good,
+            known_sellers={"Tidewater": SELLER_ID},
+        )
+        intent = draft.sign(ident.principal_key)  # the demo principal signs on the human's behalf
+        book = IntentBook()
+        book.put(intent)
+        self.ledger.append(
+            deal_id,
+            principal,
+            "policy",
+            event="intent_consent",
+            intent=intent.digest()[:16],
+            note=f'one-time consent signed by the human: "{intent.instruction}"',
+        )
+        self.ledger.append(
+            deal_id,
+            principal,
+            "policy",
+            event="intent_limits",
+            note=f"limits the agent may not exceed: {intent_summary(intent)}",
+        )
+        self.ledger.append(
+            deal_id,
+            principal,
+            "policy",
+            event="funding_vaulted",
+            note="payment method saved at PayPal once (a reference only; the vault id is never shown)",
+        )
+        return Autonomy(book, funding, mandates.principals)
+
+    def _attach_receipt(self, result: RunResult, deal: Deal, trustee: Trustee, contract: Contract) -> None:
+        """Sign the receipt of a finished in-process deal, check it offline, and put the verdict on the tape."""
+        if not deal.is_terminal:
+            return
+        events = self.ledger.tail(deal.deal_id)
+        receipt = build_receipt(
+            trustee.snapshot(),
+            contract,
+            key=self.signing_key,
+            ledger_head=self.ledger.head(deal.deal_id),
+            ledger_events=len(events),
+        )
+        report = verify_receipt(
+            receipt,
+            public_key=self.signing_key.public_key_b64,
+            contract=contract,
+            events=[{**e.__dict__} for e in events],
+        )
+        result.receipt, result.receipt_verified = receipt, report.ok
+        result.human_present = bool(receipt["human_present"])
+        self.ledger.append(
+            deal.deal_id,
+            "trustee",
+            "receipt",
+            event="receipt_issued",
+            verified=report.ok,
+            human_present=receipt["human_present"],
+            note=(
+                f"signed {receipt['outcome']} receipt, checked offline: "
+                + ("signature and ledger chain verified" if report.ok else "VERIFICATION FAILED")
+            ),
+        )
 
     # ------------------------------------------------------------- approval
 
@@ -456,6 +610,7 @@ class DealRunner:
                 checkers=self.checkers,
                 llm=self._build_llm(scenario, effective),
                 wait=self.approval_wait,
+                demo_funding=self.demo_funding,
             )
             done = flow.run()
         finally:
@@ -495,6 +650,7 @@ class DealRunner:
                 wait=self.approval_wait,
                 northwind=northwind,
                 tidewater=tidewater,
+                demo_funding=self.demo_funding,
             )
             done = flow.run()
         finally:
@@ -532,6 +688,9 @@ class DealRunner:
             attest=done.attest,
             fallback_from=fallback_from,
             outcome=done.outcome,
+            receipt=done.receipt,
+            receipt_verified=done.receipt_verified,
+            human_present=None if done.receipt is None else bool(done.receipt.get("human_present", True)),
         )
         if done.outcome is not None:
             self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=done.outcome)
@@ -664,6 +823,9 @@ class DealRunner:
         if not self._owns_mandates:
             return self.mandates
         principals = PrincipalRegistry()
+        # The principal the run's agents are registered under (see `_mint_identity`) holds the same key, so an
+        # intent mandate signed by it is checked like any other principal signature.
+        principals.register("demo-principal", ident.principal_key.public_key_b64)
         signed: dict[str, Mandate] = {}
         for agent_id in (BUYER_ID, SELLER_ID):
             m = self.mandates.get(agent_id)

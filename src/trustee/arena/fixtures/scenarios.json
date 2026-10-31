@@ -20,7 +20,8 @@
       "floor": "150.00",
       "budget": "165.00",
       "cheat": false,
-      "transcript": "honest"
+      "transcript": "honest",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     },
     {
       "name": "cheat",
@@ -42,7 +43,8 @@
       "floor": "150.00",
       "budget": "175.00",
       "cheat": true,
-      "transcript": "cheat"
+      "transcript": "cheat",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     },
     {
       "name": "forged",
@@ -65,7 +67,8 @@
       "budget": "165.00",
       "cheat": false,
       "transcript": "honest",
-      "attack": "forged_signature"
+      "attack": "forged_signature",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     },
     {
       "name": "outside",
@@ -89,7 +92,8 @@
       "cheat": false,
       "transcript": "honest",
       "flow": "outside",
-      "agreed_price": "156.00"
+      "agreed_price": "156.00",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     },
     {
       "name": "a2a",
@@ -112,7 +116,31 @@
       "budget": "165.00",
       "cheat": false,
       "transcript": "honest",
-      "flow": "a2a"
+      "flow": "a2a",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
+    },
+    {
+      "name": "overreach",
+      "title": "Agent over-reaches its instruction",
+      "blurb": "The human told the agent to spend at most $175. Tidewater will not go below $190 and the agent's own budget would allow it. Trustee checks the signed intent, sees the price is outside it, and refuses to pay unattended: the purchase steps up to a human approval.",
+      "good": {
+        "good_id": "returns-dataset-2026q3",
+        "description": "Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+          "at least 5000 rows, no blank order_id or refund_usd"
+        ],
+        "deliverable_ref": "returns-2026q3.csv",
+        "sha256": "6662797c62331e3df61cb4f4dd0e0143430fb02968c868d66794147ccea9ade0"
+      },
+      "ask": "210.00",
+      "floor": "190.00",
+      "budget": "200.00",
+      "cheat": false,
+      "transcript": "overreach",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     }
   ]
 }

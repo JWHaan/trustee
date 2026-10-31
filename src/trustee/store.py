@@ -95,6 +95,36 @@ _ADDITIVE_STATEMENTS: tuple[str, ...] = (
         created_at TEXT NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS push_configs_task ON push_configs(task_id)",
+    # Autonomy (human-not-present payments). `funding_sources.vault_id` is a PayPal secret: it is stored here and
+    # read only by `Store.get_vault_id`, never by a listing, an API response, the ledger or a receipt.
+    """CREATE TABLE IF NOT EXISTS funding_sources (
+        funding_ref TEXT PRIMARY KEY,
+        principal TEXT NOT NULL,
+        setup_token_id TEXT,
+        vault_id TEXT,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS funding_sources_setup ON funding_sources(setup_token_id)",
+    """CREATE TABLE IF NOT EXISTS intents (
+        agent_id TEXT PRIMARY KEY,
+        principal TEXT NOT NULL,
+        body TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS receipts (
+        deal_id TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        issued_at TEXT NOT NULL
+    )""",
+)
+
+# Columns added to existing tables after v1 shipped. Each is applied once, if the column is missing.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("events", "prev_hash", "TEXT"),
+    ("events", "hash", "TEXT"),
 )
 
 
@@ -180,6 +210,10 @@ class Store:
                 )
             for statement in _ADDITIVE_STATEMENTS:
                 conn.execute(statement)
+            for table, column, decl in _ADDITIVE_COLUMNS:
+                have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if column not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # -- agents --------------------------------------------------------------
 
@@ -336,12 +370,14 @@ class Store:
         actor: str,
         kind: str,
         payload: dict[str, Any],
+        prev_hash: str = "",
+        hash: str = "",  # noqa: A002 - the column name
     ) -> int:
         """Persist one event and return its sequence number."""
         with self._tx() as conn:
             cur = conn.execute(
-                "INSERT INTO events (ts, deal_id, actor, kind, payload) VALUES (?, ?, ?, ?, ?)",
-                (ts, deal_id, actor, kind, _dump(payload)),
+                "INSERT INTO events (ts, deal_id, actor, kind, payload, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ts, deal_id, actor, kind, _dump(payload), prev_hash or None, hash or None),
             )
             seq = cur.lastrowid
         if seq is None:
@@ -367,6 +403,8 @@ class Store:
                 "actor": r["actor"],
                 "kind": r["kind"],
                 "payload": _load(r["payload"]),
+                "prev_hash": r["prev_hash"] or "",
+                "hash": r["hash"] or "",
             }
             for r in rows
         ]
@@ -380,7 +418,7 @@ class Store:
 
         def _persist(ev: Event) -> None:
             try:
-                self.append_event(ev.ts, ev.deal_id, ev.actor, ev.kind, ev.payload)
+                self.append_event(ev.ts, ev.deal_id, ev.actor, ev.kind, ev.payload, ev.prev_hash, ev.hash)
             except Exception:  # noqa: BLE001 - storage must never break the ledger
                 log.exception("store: failed to persist ledger event %s; continuing", ev.kind)
 
@@ -437,6 +475,122 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT DISTINCT task_id FROM push_configs").fetchall()
         return {r["task_id"] for r in rows}
+
+    # -- key/value metadata (the Trustee signing key lives here when no env key is set) --------------------
+
+    def get_meta(self, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    def put_meta_if_absent(self, key: str, value: str) -> str:
+        """Store `value` unless `key` is set; returns the value now stored (so two racing writers agree)."""
+        with self._tx() as conn:
+            conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", (key, value))
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"])
+
+    # -- funding sources (vaulted payment methods) ---------------------------------------------------------
+
+    def put_funding(self, funding_ref: str, principal: str, setup_token_id: str | None, vault_id: str | None) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO funding_sources (funding_ref, principal, setup_token_id, vault_id, revoked, created_at)"
+                " VALUES (?, ?, ?, ?, 0, ?)"
+                " ON CONFLICT(funding_ref) DO UPDATE SET setup_token_id = excluded.setup_token_id,"
+                " vault_id = excluded.vault_id",
+                (funding_ref, principal, setup_token_id, vault_id, _now()),
+            )
+
+    def funding_public(self, funding_ref: str) -> dict[str, Any] | None:
+        """A funding source WITHOUT its vault id: who owns it, whether it is usable, whether it was revoked."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT funding_ref, principal, setup_token_id, vault_id IS NOT NULL AS active_token, revoked,"
+                " created_at FROM funding_sources WHERE funding_ref = ?",
+                (funding_ref,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "funding_ref": row["funding_ref"],
+            "principal": row["principal"],
+            "setup_token_id": row["setup_token_id"],
+            "vaulted": bool(row["active_token"]),
+            "revoked": bool(row["revoked"]),
+            "created_at": row["created_at"],
+        }
+
+    def funding_by_setup_token(self, setup_token_id: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT funding_ref FROM funding_sources WHERE setup_token_id = ?", (setup_token_id,)
+            ).fetchone()
+        return None if row is None else str(row["funding_ref"])
+
+    def get_vault_id(self, funding_ref: str, principal: str) -> str | None:
+        """The one reader of a vault id: only for an unrevoked source owned by `principal`."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT vault_id FROM funding_sources WHERE funding_ref = ? AND principal = ? AND revoked = 0",
+                (funding_ref, principal),
+            ).fetchone()
+        return None if row is None or row["vault_id"] is None else str(row["vault_id"])
+
+    def revoke_funding(self, funding_ref: str) -> bool:
+        with self._tx() as conn:
+            cur = conn.execute("UPDATE funding_sources SET revoked = 1 WHERE funding_ref = ?", (funding_ref,))
+            return cur.rowcount == 1
+
+    # -- intent mandates -----------------------------------------------------------------------------------
+
+    def put_intent(self, agent_id: str, principal: str, body: dict[str, Any], digest: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO intents (agent_id, principal, body, digest, revoked, updated_at) VALUES (?, ?, ?, ?, 0, ?)"
+                " ON CONFLICT(agent_id) DO UPDATE SET principal = excluded.principal, body = excluded.body,"
+                " digest = excluded.digest, revoked = 0, updated_at = excluded.updated_at",
+                (agent_id, principal, _dump(body), digest, _now()),
+            )
+
+    def get_intent(self, agent_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM intents WHERE agent_id = ?", (agent_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "agent_id": row["agent_id"],
+            "principal": row["principal"],
+            "body": _load(row["body"]),
+            "digest": row["digest"],
+            "revoked": bool(row["revoked"]),
+        }
+
+    def revoke_intent(self, agent_id: str) -> bool:
+        with self._tx() as conn:
+            cur = conn.execute("UPDATE intents SET revoked = 1, updated_at = ? WHERE agent_id = ?", (_now(), agent_id))
+            return cur.rowcount == 1
+
+    def list_intents(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT agent_id FROM intents ORDER BY agent_id").fetchall()
+        return [i for i in (self.get_intent(r["agent_id"]) for r in rows) if i is not None]
+
+    # -- settlement receipts -------------------------------------------------------------------------------
+
+    def put_receipt(self, deal_id: str, body: dict[str, Any]) -> bool:
+        """Keep the first receipt issued for a deal. Returns False when one already exists."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO receipts (deal_id, body, issued_at) VALUES (?, ?, ?)",
+                (deal_id, _dump(body), _now()),
+            )
+            return cur.rowcount == 1
+
+    def get_receipt(self, deal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT body FROM receipts WHERE deal_id = ?", (deal_id,)).fetchone()
+        return None if row is None else dict(_load(row["body"]))
 
     # -- webhooks ------------------------------------------------------------
 

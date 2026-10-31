@@ -35,6 +35,9 @@ class Scenario:
     # "negotiated" (in-process agents) | "outside" (agents driving /v1 over HTTP) | "a2a" (agents on A2A servers)
     flow: str = "negotiated"
     agreed_price: Decimal | None = None  # outside flow: the price agreed off-platform
+    # The human's own words, signed once as an intent mandate so the buyer agent can pay with no click. None: the
+    # deal uses the human-present approval flow exactly as before.
+    instruction: str | None = None
 
     @property
     def opening_price(self) -> Decimal:
@@ -57,6 +60,7 @@ def _parse(raw: dict) -> Scenario:
         attack=raw.get("attack"),
         flow=raw.get("flow", "negotiated"),
         agreed_price=Decimal(str(raw["agreed_price"])) if raw.get("agreed_price") else None,
+        instruction=raw.get("instruction"),
     )
 
 

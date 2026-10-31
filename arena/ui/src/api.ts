@@ -20,6 +20,11 @@ export interface Row {
   check: "verified" | "rejected" | "";
   link: string;
   wait_s: string;
+  /** Policy rows: the intent-mandate rule id and its result ("pass" | "fail", or the decision on a summary row). */
+  rule: string;
+  result: string;
+  /** Receipt rows: who authorized the payment ("intent_mandate" = no human click, "human" = approved by a person). */
+  authority: "" | "intent_mandate" | "human";
 }
 
 export interface Snapshot {
@@ -39,6 +44,22 @@ export interface Snapshot {
   fallback_from: string | null;
   outcome: string | null;
   events: number;
+  /** Trustee's Ed25519-signed settlement receipt, once the deal is finished. */
+  receipt?: Receipt | null;
+  /** The receipt checked offline (signature + ledger hash chain) at the end of the run. */
+  receipt_verified?: boolean | null;
+  human_present?: boolean | null;
+}
+
+export interface Receipt {
+  deal_id: string;
+  outcome: "settled" | "voided";
+  amount: string;
+  currency: string;
+  human_present: boolean;
+  intent_mandate_digest: string | null;
+  ledger_head: string;
+  signature: string;
 }
 
 export interface ScenarioInfo {
@@ -52,6 +73,7 @@ export interface ScenarioInfo {
   cheat: boolean;
   attack: string | null;
   flow: string;
+  instruction?: string | null;
 }
 
 export interface Health {

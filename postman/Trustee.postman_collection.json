@@ -1209,6 +1209,541 @@
         }
       ],
       "name": "4 · A2A"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('registered', () => pm.expect([200, 201]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "1. Register principal",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"principal\": \"demo-auto-org\",\n  \"proof\": \"COyMOq7bYKiDiL0yqwlDTTFhgz6pXrAXH2VpYzNfwjK9SvafsTgJHG8mdS8nvrS1p9tNQ9ofsQxmEcQvjJBDBg==\",\n  \"public_key\": \"bONQCTlWHAd1FY_ljqX3RXSAq5-TsBFjO5kovOKJEZc=\"\n}"
+            },
+            "description": "The human behind the buyer agent proves their key.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "principals"
+              ],
+              "raw": "{{baseUrl}}/v1/principals"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('registered', () => pm.expect([200, 201]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "2. Register buyer agent",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"agent_id\": \"demo-auto-buyer\",\n  \"paypal_email\": null,\n  \"principal\": \"demo-auto-org\",\n  \"principal_signature\": \"EiyV1svb_61CpllO-qlCQbwZx22Smw0DhY3enswgaIsOEmnZJwZmHxiuSD8Pcg4-uOVHiyYrmYTdquZ3w-l4AA==\",\n  \"proof\": \"d1fg8-sOIha0zwTfwdVhPExrGi_cn6pKtjS53zJDzl_SRyBPkRLjiVhGDPamej7FXhFcRE1TsTrF3Y89Y8auBQ==\",\n  \"public_key\": \"0Z5cf91K5S1PuzmT7rDFtWJh0c829cvlmMGGZNeRQyY=\",\n  \"roles\": [\n    \"buyer\"\n  ]\n}"
+            },
+            "description": "The agent that will pay on its own. Needs the seller from folder 2.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agents"
+              ],
+              "raw": "{{baseUrl}}/v1/agents"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('published', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "3. Publish spend mandate",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"agent_id\": \"demo-auto-buyer\",\n  \"allowed_categories\": null,\n  \"allowed_counterparties\": null,\n  \"grants\": \"spend\",\n  \"max_amount\": \"250.00\",\n  \"max_total\": \"1000.00\",\n  \"notes\": \"demo-only mandate\",\n  \"principal\": \"demo-auto-org\",\n  \"principal_signature\": \"J7QP3kYfiM4SdsCcS9iXjizlIc8s5IWL_A4TUOo3jrAjhtsLqre0whIRP-e-h2qlhugrxdIV1HpNlavb66cbDQ==\",\n  \"revoked\": false,\n  \"valid_until\": \"2027-12-31T23:59:00\",\n  \"version\": 1\n}"
+            },
+            "description": "The ordinary spend ceiling. The intent mandate can only narrow what happens inside it.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "mandates"
+              ],
+              "raw": "{{baseUrl}}/v1/mandates"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('funding source created', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.funding_ref).to.eql('fund-w16-demo');",
+                  "  pm.expect(JSON.stringify(body)).to.not.include('vault_id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "4. Start the one-time funding consent",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"funding_ref\": \"fund-w16-demo\",\n  \"nonce\": \"w16-demo-nonce-001\",\n  \"signature\": \"hth08RBhxHQSsvTzaX22fQDnJn7revBvHZIQC-8TmoILYf-hAPGn2B4mi2dyjM35UD4ShTWKx2Fae-XRPs4MAg==\"\n}"
+            },
+            "description": "Signed by the principal, with the funding_ref it chose. Without PayPal credentials the source is active at once. Against the sandbox the response carries `approve_url`: open it ONCE and approve, then PayPal returns to /v1/funding/return and the source turns active. The PayPal vault id is never returned.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "principals",
+                "demo-auto-org",
+                "funding"
+              ],
+              "raw": "{{baseUrl}}/v1/principals/demo-auto-org/funding"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('intent published', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  pm.expect(pm.response.json().intent_mandate_digest).to.have.lengthOf(64);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "5. Publish the signed intent mandate",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"agent_id\": \"demo-auto-buyer\",\n  \"allowed_categories\": null,\n  \"allowed_sellers\": [\n    \"demo-seller-agent\"\n  ],\n  \"currency\": \"USD\",\n  \"expires_at\": \"2027-12-31T23:59:00\",\n  \"funding_ref\": \"fund-w16-demo\",\n  \"good_ids\": [\n    \"good-w12-returns-2026q3\"\n  ],\n  \"human_present\": false,\n  \"instruction\": \"Buy the Q3 2026 returns extract; spend at most $175; only from demo-seller-agent; must match the sha256\",\n  \"intent_id\": \"intent-w16-demo-001\",\n  \"issued_at\": \"2026-10-31T08:00:00\",\n  \"keywords\": null,\n  \"max_price\": \"175.00\",\n  \"max_purchases\": null,\n  \"max_total\": null,\n  \"principal\": \"demo-auto-org\",\n  \"principal_signature\": \"UHNWCQGHK5eX6jrlp6U0CsAE2A-nSdJGrId_m4vPo30V1BxMMug45AmF6EFsa8CYhf-cC4a2U3raXX5PHC46BA==\",\n  \"require_escrow\": true,\n  \"required_criteria\": [\n    \"sha256\"\n  ],\n  \"version\": 1,\n  \"window_seconds\": null\n}"
+            },
+            "description": "The human's instruction and limits, signed once: at most 175.00, only from demo-seller-agent, the contract must commit to a sha256. Publishing the identical document again returns 200.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "intents"
+              ],
+              "raw": "{{baseUrl}}/v1/intents"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('escrowed under the intent mandate', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  const deal = pm.response.json();",
+                  "  pm.expect(deal.state).to.be.oneOf(['ESCROWED', 'DELIVERED', 'SETTLED']);",
+                  "  pm.expect(deal.authority.human_present).to.eql(false);",
+                  "  pm.expect(deal.authority.policy.length).to.be.above(10);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "6. Open the deal: the agent pays by itself",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"buyer\": \"demo-auto-buyer\",\n  \"currency\": \"USD\",\n  \"deadline\": \"2027-12-31T23:59:00\",\n  \"deal_id\": \"deal-w16-auto-001\",\n  \"formed_at\": \"2026-10-31T09:00:00\",\n  \"good\": {\n    \"acceptance_criteria\": [\n      \"sha256 matches the contract\",\n      \"CSV parses\"\n    ],\n    \"category\": \"digital\",\n    \"deliverable_ref\": \"returns-2026q3.csv\",\n    \"description\": \"Q3 2026 returns extract\",\n    \"good_id\": \"good-w12-returns-2026q3\",\n    \"sha256\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\"\n  },\n  \"price\": \"100.00\",\n  \"seller\": \"demo-seller-agent\",\n  \"signatures\": {\n    \"demo-auto-buyer\": \"UwH4FyGjp1P7rb9OXBLsdfxt8s5I4my6WOP_7Tmezj7aF3xm-5HC-tLV9EHJtYT6wWX4-LyaRAOLWrPBIcBpBw==\",\n    \"demo-seller-agent\": \"H5ioz7zit9gQzw-UEL9upt0cbUBq4iA2FsNMiWgscnnHnV2DDEbr1WOVLfRl-tLlZzrn_PQv6m-eUG2VEH7aBw==\"\n  },\n  \"transcript_ref\": \"\"\n}"
+            },
+            "description": "Every intent rule passes, so the funds are held with no approval click. `authority` in the response says who authorized the payment and lists each rule's result.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "deals"
+              ],
+              "raw": "{{baseUrl}}/v1/deals"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('recorded (or already settled)', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "7. Record delivery (signed by the seller)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"content_hash\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\",\n  \"deal_id\": \"deal-w16-auto-001\",\n  \"deliverable_ref\": \"returns-2026q3.csv\",\n  \"delivered_at\": \"2026-10-31T09:05:00\",\n  \"kind\": \"delivery\",\n  \"msg_id\": \"msg-deal-w16-auto-001-delivery\",\n  \"sender\": \"demo-seller-agent\",\n  \"signature\": \"whkkv9tR9xE3vj5QPg0-kRGMeXg8AY2kLENLSQu-zuNAl_M3eyc2mhd-kdPEieVsXokt9JTVwumfx-Nj0ASeCw==\",\n  \"ts\": \"2026-10-31T09:05:00\"\n}"
+            },
+            "description": "Same as folder 2. A repeat after settlement is a 409.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "deals",
+                "deal-w16-auto-001",
+                "delivery"
+              ],
+              "raw": "{{baseUrl}}/v1/deals/deal-w16-auto-001/delivery"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('settled', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().state).to.eql('SETTLED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "8. Attest (signed by the buyer)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"deal_id\": \"deal-w16-auto-001\",\n  \"evidence\": {\n    \"sha256\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\"\n  },\n  \"kind\": \"attest\",\n  \"msg_id\": \"msg-deal-w16-auto-001-attest\",\n  \"reason\": \"sha256 of the delivered bytes matches the contract\",\n  \"sender\": \"demo-auto-buyer\",\n  \"signature\": \"jGTDO6qmlLD3zhgZc0ewNU0TX7iLmoWzFPGMfYsfjSrqOOOVP5dhXcwETOLfMOLl-DZsW2UjLb-QvbudeVxvBA==\",\n  \"ts\": \"2026-10-31T09:10:00\",\n  \"verdict\": \"accept\"\n}"
+            },
+            "description": "Capture happens only now, after the intent is re-checked at the moment of capture.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "deals",
+                "deal-w16-auto-001",
+                "attest"
+              ],
+              "raw": "{{baseUrl}}/v1/deals/deal-w16-auto-001/attest"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('signed receipt for an unattended payment', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const r = pm.response.json();",
+                  "  pm.expect(r.outcome).to.eql('settled');",
+                  "  pm.expect(r.signature).to.be.a('string');",
+                  "  pm.expect(r.intent_mandate_digest).to.have.lengthOf(64);",
+                  "  pm.collectionVariables.set('receipt', JSON.stringify(r));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "9. Signed settlement receipt",
+          "request": {
+            "description": "Trustee's Ed25519-signed record of the outcome. Kept in the `receipt` variable for step 10.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "deals",
+                "deal-w16-auto-001",
+                "receipt"
+              ],
+              "raw": "{{baseUrl}}/v1/deals/deal-w16-auto-001/receipt"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('signature verifies', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().ok).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "10. Verify the receipt",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\"receipt\": {{receipt}}}"
+            },
+            "description": "Server-side check of the signature. For a check that trusts no server, run `python -m trustee.verify receipt.json --key <public key>`.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "receipts",
+                "verify"
+              ],
+              "raw": "{{baseUrl}}/v1/receipts/verify"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('an Ed25519 key', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().algorithm).to.eql('Ed25519');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Trustee receipt-signing key",
+          "request": {
+            "description": "The public key to pin when verifying receipts offline.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "trustee-key.json"
+              ],
+              "raw": "{{baseUrl}}/.well-known/trustee-key.json"
+            }
+          }
+        }
+      ],
+      "name": "5 · Autonomous payment (intent mandate)"
     }
   ],
   "variable": [
@@ -1221,6 +1756,11 @@
       "key": "operatorToken",
       "type": "string",
       "value": ""
+    },
+    {
+      "key": "receipt",
+      "type": "string",
+      "value": "{}"
     }
   ]
 }

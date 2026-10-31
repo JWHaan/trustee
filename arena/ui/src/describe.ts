@@ -138,6 +138,35 @@ export function describe(row: Row): Line {
     return { headline: `attestation on record — ${row.verdict}`, detail: note };
   }
 
+  if (row.kind === "policy") {
+    if (row.rule) return { headline: `${row.rule} — ${row.result}`, detail: note };
+    switch (row.event) {
+      case "intent_consent":
+        return { headline: "one-time consent", detail: note };
+      case "intent_limits":
+        return { headline: "limits signed by the human", detail: note };
+      case "funding_vaulted":
+        return { headline: "payment method vaulted", detail: note };
+      case "policy_decision":
+        return {
+          headline:
+            row.result === "autonomous"
+              ? "paying under the intent mandate — no human click"
+              : row.result === "step_up"
+                ? "outside the instruction — a human must approve"
+                : "refused by the intent mandate",
+          detail: note,
+        };
+      default:
+        return { headline: row.event.replace(/_/g, " "), detail: note };
+    }
+  }
+
+  if (row.kind === "receipt") {
+    const how = row.authority === "intent_mandate" ? "paid under the intent mandate" : "approved by a human";
+    return { headline: "signed receipt issued", detail: `${how} · ${note}` };
+  }
+
   if (row.kind === "ruling") {
     const arbiter = row.actor.startsWith("arbiter");
     return arbiter
@@ -158,6 +187,7 @@ export function isNarrative(row: Row): boolean {
   if (row.kind === "note") return false;
   if (row.kind === "msg" && row.event === "") return false;
   if (row.kind === "attest") return false; // trustee's receipt of the buyer's verdict
+  if (row.kind === "policy" && row.rule !== "") return false; // the checklist panel shows each rule
   if (row.kind === "ruling" && !row.actor.startsWith("arbiter")) return false; // trustee applying it
   return true;
 }

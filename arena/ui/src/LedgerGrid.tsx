@@ -97,7 +97,7 @@ const COLUMNS: ColDef<Row>[] = [
   { field: "note", headerName: "note", flex: 1, minWidth: 260, tooltipField: "note" },
 ];
 
-const KINDS = ["all", "msg", "identity", "mandate", "paypal", "state", "ruling", "api"] as const;
+const KINDS = ["all", "msg", "identity", "mandate", "paypal", "state", "policy", "receipt", "ruling", "api"] as const;
 type KindFilter = (typeof KINDS)[number];
 
 export function LedgerGrid({ rows }: { rows: Row[] }) {
@@ -188,6 +188,9 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
             "row-state": (p: RowClassParams<Row>) => p.data?.kind === "state",
             "row-run": (p: RowClassParams<Row>) => p.data?.kind === "run",
             "row-api": (p: RowClassParams<Row>) => p.data?.kind === "api",
+            "row-policy-ok": (p: RowClassParams<Row>) => p.data?.kind === "policy" && p.data?.result !== "fail",
+            "row-policy-bad": (p: RowClassParams<Row>) => p.data?.kind === "policy" && p.data?.result === "fail",
+            "row-receipt": (p: RowClassParams<Row>) => p.data?.kind === "receipt",
             "row-id-ok": (p: RowClassParams<Row>) => p.data?.kind === "identity" && p.data?.check === "verified",
             "row-id-bad": (p: RowClassParams<Row>) => p.data?.kind === "identity" && p.data?.check === "rejected",
           }}

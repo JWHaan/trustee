@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowRight, Check, Copy } from "lucide-react";
 import type { Health, Row, Snapshot } from "./api";
-import { deriveMoney, type MoneyPhase } from "./derive";
+import { deriveMoney, derivePolicy, type MoneyPhase } from "./derive";
 import { money } from "./describe";
 
 const POS: Record<MoneyPhase, number> = {
@@ -45,6 +45,7 @@ export function MoneyPanel({ rows, snap, running, health }: Props) {
   const m = deriveMoney(rows, snap, running);
   const amt = m.amount ? money(m.amount) : "";
   const pos = POS[m.phase];
+  const authority = derivePolicy(rows).authority;
 
   const buyer: Record<MoneyPhase, string> = {
     idle: "negotiating",
@@ -109,6 +110,8 @@ export function MoneyPanel({ rows, snap, running, health }: Props) {
         <span className="env">
           <ArrowRight size={12} aria-hidden="true" /> {env}
         </span>
+        {authority === "intent" ? <span className="env auth">Authorized by intent mandate, no human click</span> : null}
+        {authority === "stepup" ? <span className="env auth">Outside the mandate: human approval</span> : null}
         <CopyId label="order" value={m.orderId} />
         <CopyId label="authorization" value={m.authId} />
       </div>

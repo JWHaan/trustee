@@ -47,6 +47,7 @@ from ..a2a.client import A2AClient, artifact_data
 from ..a2a.models import TERMINAL_STATES, A2AError, Message, Task, TaskState
 from ..agents.buyer import ArtifactStore, BuyerAgent, Checker
 from ..identity import verify
+from ..intent import draft_intent, intent_summary
 from ..ledger import Ledger
 from ..llm import LLM
 from ..mandate import Mandate
@@ -66,9 +67,11 @@ from .common import (
     discover_peer,
     move_is_signed_by,
     parse_move,
+    publish_intent,
     publish_mandate,
     refusal_of,
     register_with_trustee,
+    request_funding,
     result_data,
     state_name,
 )
@@ -158,6 +161,9 @@ class Northwind(NetworkAgent):
         http: httpx.Client | None = None,
         public_url: str | None = None,
         observer: HopObserver | None = None,
+        instruction: str | None = None,
+        dry_run: bool | None = None,
+        demo_funding: Callable[[str], str | None] | None = None,
     ):
         super().__init__(
             identity
@@ -178,6 +184,11 @@ class Northwind(NetworkAgent):
         self.poll_hook = poll_hook
         self.mandate_ceiling = mandate_ceiling
         self.inbox_root = inbox_root
+        # Human-not-present payments: the human's own sentence, signed once as an intent mandate before a purchase.
+        # `dry_run=False` marks a run against real PayPal, where only a pre-registered demo vault can pay unattended.
+        self.instruction = instruction
+        self.dry_run = dry_run
+        self.demo_funding = demo_funding
         self.inbox: OrderedDict[str, InboxItem] = OrderedDict()
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
         self._spend: dict[str, _Spend] = {}
@@ -287,6 +298,7 @@ class Northwind(NetworkAgent):
 
         trustee = self._trustee()
         self._ensure_registered(trustee, seller.agent_id)
+        self._ensure_intent(trustee, seller, deal_id)
         with self._lock:
             self._pending[deal_id] = _Pending(contract, seller)
             while len(self._pending) > MAX_PENDING:
@@ -481,6 +493,57 @@ class Northwind(NetworkAgent):
             raise PurchaseError(str(exc)) from None
         self._registered.add(url)
         self._spend[url] = _Spend(mandate.version, categories, sellers)
+
+    def _ensure_intent(self, trustee: PeerLink, seller: PeerKey, deal_id: str) -> None:
+        """The human's one-time consent: sign their sentence as an intent mandate and publish it to Trustee.
+
+        The model may propose the limits (see `draft_intent`), code checks them against the sentence, and only the
+        principal's key makes the result binding. Without funding the purchase takes the human-present path."""
+        if not self.instruction:
+            return
+        me = self.identity
+        ref = self._funding_ref(trustee)
+        if ref is None:
+            self._policy(deal_id, "no_funding", "no vaulted funding source: a human approves this payment")
+            return
+        names = {n: seller.agent_id for n in {seller.name or "", (seller.name or "").split(" ")[0], seller.label} if n}
+        scripted = getattr(self.llm, "model", "") == "scripted"
+        draft = draft_intent(
+            self.instruction,
+            None if scripted else self.llm,
+            agent_id=me.agent_id,
+            principal=me.principal,
+            funding_ref=ref,
+            good=self.good,
+            known_sellers=names,
+        )
+        try:
+            publish_intent(trustee, me, draft.intent)
+        except (PeerError, A2AError) as exc:
+            raise PurchaseError(str(exc)) from None
+        intent = draft.intent
+        self._policy(deal_id, "intent_consent", f'one-time consent signed by the human: "{intent.instruction}"')
+        self._policy(deal_id, "intent_limits", f"limits the agent may not exceed: {intent_summary(intent)}")
+        self._policy(deal_id, "funding_vaulted", "payment method saved at PayPal once (a reference only)")
+
+    def _funding_ref(self, trustee: PeerLink) -> str | None:
+        if self.demo_funding is not None:
+            ref = self.demo_funding(self.identity.principal)
+            if ref is not None:
+                return ref
+        if self.dry_run is False:
+            return None  # real PayPal: only a pre-registered demo vault can pay unattended; never open a consent here
+        try:
+            reply = request_funding(trustee, self.identity)
+        except (PeerError, A2AError):
+            return None
+        if reply.get("status") == "active":
+            return str(reply["funding_ref"])
+        return None  # the human still has to open the consent link once
+
+    def _policy(self, deal_id: str, event: str, note: str) -> None:
+        if self.ledger is not None:
+            self.ledger.append(deal_id, self.identity.principal, "policy", event=event, note=note)
 
     def _tell_seller(self, tw: PeerLink, deal_id: str, contract: Contract) -> None:
         reply = tw.skill("escrow-opened", {"deal_id": deal_id, "contract_digest": contract.digest()})

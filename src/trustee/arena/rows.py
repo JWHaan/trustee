@@ -32,6 +32,9 @@ COLUMNS = (
     "check",
     "link",
     "wait_s",
+    "rule",
+    "result",
+    "authority",
 )
 
 
@@ -39,6 +42,19 @@ def _price(p: dict[str, Any]) -> str:
     """`key_clauses()` reports "156.00 USD"; the amount column wants the number."""
     raw = str(p.get("price") or p.get("amount") or "")
     return raw.split(" ")[0] if raw else ""
+
+
+def _policy_result(p: dict[str, Any]) -> str:
+    if p.get("rule"):
+        return "pass" if p.get("ok") else "fail"
+    return str(p.get("outcome") or "")
+
+
+def _authority(p: dict[str, Any]) -> str:
+    present = p.get("human_present")
+    if present is None:
+        return ""
+    return "human" if present else "intent_mandate"
 
 
 def to_row(ev: Event, seq: int) -> dict[str, Any]:
@@ -69,4 +85,9 @@ def to_row(ev: Event, seq: int) -> dict[str, Any]:
         "check": ("verified" if p.get("ok") else "rejected") if identity else "",
         "link": str(p.get("approve_url") or p.get("link") or ""),
         "wait_s": str(p.get("wait_s") or ""),
+        # Policy rows: `rule` is the intent-mandate rule id, `result` is pass / fail (or the decision for a summary
+        # row). `authority` marks a receipt row: who authorized the payment.
+        "rule": str(p.get("rule") or "") if ev.kind == "policy" else "",
+        "result": _policy_result(p) if ev.kind == "policy" else "",
+        "authority": _authority(p) if ev.kind == "receipt" else "",
     }

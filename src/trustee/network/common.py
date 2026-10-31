@@ -64,9 +64,15 @@ from ..a2a.models import (
 )
 from ..a2a.tasks import ephemeral_task
 from ..identity import AgentKey, verify
+from ..intent import IntentMandate
 from ..llm import LLM
 from ..mandate import Mandate
-from ..platform.wire import agent_signing_bytes, mandate_to_dict, principal_signing_bytes
+from ..platform.wire import (
+    agent_signing_bytes,
+    funding_setup_signing_bytes,
+    mandate_to_dict,
+    principal_signing_bytes,
+)
 from ..protocol import Accept, Counter, Msg, Offer
 
 log = logging.getLogger(__name__)
@@ -652,6 +658,28 @@ def publish_mandate(link: PeerLink, identity: AgentIdentity, mandate: Mandate) -
     """Sign `mandate` with the principal key and publish it to Trustee as the `publish-mandate` skill."""
     signed = mandate.sign(identity.principal_key)
     _require_completed("publish-mandate", link.skill("publish-mandate", mandate_to_dict(signed)))
+
+
+def request_funding(link: PeerLink, identity: AgentIdentity) -> dict[str, Any]:
+    """Ask Trustee for a funding source (`register-funding`): the principal signs, Trustee answers with a
+    `funding_ref` and, against real PayPal, the link the human opens ONCE. Returns Trustee's reply data."""
+    nonce = uuid.uuid4().hex
+    task = link.skill(
+        "register-funding",
+        {
+            "principal": identity.principal,
+            "nonce": nonce,
+            "signature": identity.principal_key.sign(funding_setup_signing_bytes(identity.principal, nonce)),
+        },
+    )
+    _require_completed("register-funding", task)
+    assert isinstance(task, Task)
+    return result_data(task)
+
+
+def publish_intent(link: PeerLink, identity: AgentIdentity, intent: IntentMandate) -> None:
+    """Sign `intent` with the principal key and publish it to Trustee as the `publish-intent` skill."""
+    _require_completed("publish-intent", link.skill("publish-intent", intent.sign(identity.principal_key).public()))
 
 
 def register_with_trustee(link: PeerLink, identity: AgentIdentity, mandate: Mandate) -> None:

@@ -20,10 +20,22 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from ..intent import IntentMandate
 from ..protocol import Attest, Contract, Delivery
+from ..verify import verify_receipt
 from .agent_card import build_agent_card
 from .service import DealService, ServiceError
-from .wire import AgentIn, MandateIn, PrincipalIn, ResolveIn, RevokeIn, mandate_from_in
+from .wire import (
+    AgentIn,
+    FundingRevokeIn,
+    FundingSetupIn,
+    MandateIn,
+    PrincipalIn,
+    ReceiptVerifyIn,
+    ResolveIn,
+    RevokeIn,
+    mandate_from_in,
+)
 
 log = logging.getLogger(__name__)
 
@@ -211,6 +223,136 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
     async def revoke_mandate(agent_id: str, body: RevokeIn) -> JSONResponse:
         return await call(service.revoke_mandate, agent_id, body.signature)
 
+    # ------------------------------------------------- intent mandates and funding
+
+    @router.post(
+        "/v1/intents",
+        operation_id="publish_intent",
+        tags=["Autonomy"],
+        summary="Publish a signed intent mandate (consent to unattended purchases)",
+        description=(
+            "The AP2 Intent Mandate for a human-not-present purchase. The principal signs the human's own "
+            "`instruction`, the limits derived from it (`max_price`, `max_total`, `allowed_sellers`, item match, "
+            "`required_criteria`, `max_purchases` per `window_seconds`, `expires_at`) and the `funding_ref` of a "
+            "vaulted PayPal funding source. Signed bytes are canonical JSON of every field except "
+            "`principal_signature`. After this, a contract of that buyer agent that passes every rule is escrowed "
+            "with no payer click; a hard violation is refused, a soft overrun falls back to human approval. "
+            "Republishing the same document is a 200; an older `issued_at` is a 409."
+        ),
+        status_code=201,
+        responses=_errors(
+            {
+                401: "The intent is not signed by its principal.",
+                403: "The agent belongs to a different principal.",
+                404: "Unknown agent.",
+                409: "This intent was revoked, or a newer one is already on file.",
+                422: "Malformed intent, `require_escrow`/`human_present` not at their fixed values, or a "
+                "`funding_ref` that is not an active funding source of the principal.",
+            }
+        ),
+    )
+    async def publish_intent(body: IntentMandate) -> JSONResponse:
+        try:
+            result = await asyncio.to_thread(service.publish_intent, body)
+        except ServiceError as exc:
+            return error_response(exc)
+        return JSONResponse(status_code=201 if result["created"] else 200, content=result)
+
+    @router.post(
+        "/v1/intents/{agent_id}/revoke",
+        operation_id="revoke_intent",
+        tags=["Autonomy"],
+        summary="Revoke an agent's intent mandate",
+        description=(
+            "The principal signs canonical JSON `{revoke_intent: agent_id}`. New deals are refused immediately and "
+            "an autonomous deal still waiting for delivery is held for a human instead of being captured."
+        ),
+        responses=_errors({401: "Not signed by the agent's principal.", 404: "Unknown agent or no intent on file."}),
+    )
+    async def revoke_intent(agent_id: str, body: RevokeIn) -> JSONResponse:
+        return await call(service.revoke_intent, agent_id, body.signature)
+
+    @router.post(
+        "/v1/principals/{principal}/funding",
+        operation_id="start_funding",
+        tags=["Autonomy"],
+        summary="Start the one-time PayPal consent for a funding source",
+        description=(
+            "Signed by the principal. Returns a `funding_ref` (an opaque handle) and the PayPal `approve_url` the "
+            "human opens ONCE. When PayPal sends them back to `/v1/funding/return`, Trustee vaults the payment "
+            "method. The PayPal vault id is a secret: it is stored server-side and never returned by any endpoint. "
+            "Without PayPal credentials (dry-run) the source is active immediately and `approve_url` is null."
+        ),
+        status_code=201,
+        responses=_errors({401: "Not signed by the principal.", 404: "Unknown principal.", 502: "PayPal failed."}),
+    )
+    async def start_funding(principal: str, body: FundingSetupIn) -> JSONResponse:
+        return await call(service.begin_funding, principal, body.nonce, body.signature, body.funding_ref, status=201)
+
+    @router.post(
+        "/v1/principals/{principal}/funding/{funding_ref}/revoke",
+        operation_id="revoke_funding",
+        tags=["Autonomy"],
+        summary="Revoke a funding source",
+        description=(
+            "Signed by the principal over canonical JSON `{action: funding_revoke, principal, funding_ref}`. "
+            "Later purchases under an intent that names it are not paid unattended: they step up to human approval."
+        ),
+        responses=_errors({401: "Not signed by the principal.", 404: "Unknown principal or funding source."}),
+    )
+    async def revoke_funding(principal: str, funding_ref: str, body: FundingRevokeIn) -> JSONResponse:
+        return await call(service.revoke_funding, principal, funding_ref, body.signature)
+
+    @router.get(
+        "/v1/funding/return",
+        operation_id="funding_return",
+        tags=["PayPal"],
+        summary="Payer returns from the one-time PayPal consent (browser redirect)",
+        description=(
+            "PayPal redirects the payer here with `approval_token_id` after the consent. Trustee exchanges it for a "
+            "payment token and stores it. Replays are no-ops. The response never contains the payment token."
+        ),
+        response_model=None,
+        responses=_errors({404: "Unknown consent token.", 409: "Not approved yet, or revoked.", 502: "PayPal failed."}),
+    )
+    async def funding_return(request: Request, approval_token_id: str) -> JSONResponse | HTMLResponse:
+        wants_json = "application/json" in request.headers.get("accept", "")
+        try:
+            result = await asyncio.to_thread(service.funding_return, approval_token_id)
+        except ServiceError as exc:
+            if wants_json:
+                return error_response(exc)
+            return HTMLResponse(_page("Could not save the payment method", exc.detail), status_code=exc.status)
+        if wants_json:
+            return JSONResponse(content=result)
+        return HTMLResponse(
+            _page(
+                "Payment method saved.", "Your agent can now pay within the limits you signed. You can close this tab."
+            )
+        )
+
+    @router.get(
+        "/v1/funding/cancel",
+        operation_id="funding_cancel",
+        tags=["PayPal"],
+        summary="Payer backs out of the one-time PayPal consent (browser redirect)",
+        description="Nothing was saved, so nothing is undone.",
+        response_model=None,
+    )
+    async def funding_cancel() -> HTMLResponse:
+        return HTMLResponse(_page("Cancelled", "No payment method was saved."))
+
+    @router.get(
+        "/v1/funding/{funding_ref}",
+        operation_id="get_funding",
+        tags=["Autonomy"],
+        summary="Read a funding source's status",
+        description="`status` is consent_required, active or revoked. Nothing about the PayPal account is returned.",
+        responses=_errors({404: "Unknown funding source."}),
+    )
+    async def get_funding(funding_ref: str) -> JSONResponse:
+        return await call(service.funding_status, funding_ref)
+
     # ----------------------------------------------------------------- deals
 
     @router.post(
@@ -269,6 +411,45 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
     )
     async def deal_events(deal_id: str, after_seq: int = 0, limit: int = 200) -> JSONResponse:
         return await call(service.events, deal_id, after_seq, limit)
+
+    @router.get(
+        "/v1/deals/{deal_id}/receipt",
+        operation_id="get_receipt",
+        tags=["Deals"],
+        summary="Signed settlement receipt of a finished deal",
+        description=(
+            "Issued when the deal is SETTLED or VOIDED: outcome, amount, parties, contract digest, intent-mandate "
+            "digest, `human_present`, delivery sha256, every policy rule result, PayPal ids, the deal's ledger chain "
+            "head, and Trustee's Ed25519 signature. Verify it offline with `python -m trustee.verify`, or with "
+            "`POST /v1/receipts/verify`. The key is at `/.well-known/trustee-key.json`."
+        ),
+        responses=_errors({404: "No deal with this id.", 409: "The deal is not finished yet."}),
+    )
+    async def get_receipt(deal_id: str) -> JSONResponse:
+        return await call(service.receipt, deal_id)
+
+    @router.post(
+        "/v1/receipts/verify",
+        operation_id="verify_receipt",
+        tags=["Deals"],
+        summary="Verify a settlement receipt (server-side convenience)",
+        description=(
+            "Checks the signature against THIS Trustee's key, and, when supplied, the contract and intent digests and "
+            "the ledger hash chain. The same checks run offline in `python -m trustee.verify`; prefer that when you do "
+            "not want to trust this server."
+        ),
+    )
+    async def verify_receipt_route(body: ReceiptVerifyIn) -> JSONResponse:
+        key = service.signing_key.public_key_b64
+        report = await asyncio.to_thread(
+            verify_receipt,
+            body.receipt,
+            public_key=key,
+            contract=body.contract,
+            intent=body.intent,
+            events=body.events,
+        )
+        return JSONResponse(content=report.as_dict())
 
     @router.post(
         "/v1/deals/{deal_id}/delivery",
@@ -436,7 +617,9 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
 
     async def agent_card(request: Request) -> JSONResponse:
         base = os.environ.get("TRUSTEE_PUBLIC_URL") or str(request.base_url)
-        return JSONResponse(build_agent_card(base), headers={"Cache-Control": "public, max-age=300"})
+        return JSONResponse(
+            build_agent_card(base, service.signing_key.public_key_b64), headers={"Cache-Control": "public, max-age=300"}
+        )
 
     router.add_api_route(
         "/.well-known/agent.json",
@@ -449,6 +632,19 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
             "Describes Trustee's skills, endpoints and security schemes for A2A clients. The base URL comes from "
             "`TRUSTEE_PUBLIC_URL`, or from the request host when that is unset."
         ),
+    )
+
+    async def trustee_key() -> JSONResponse:
+        return JSONResponse(service.trustee_key(), headers={"Cache-Control": "public, max-age=300"})
+
+    router.add_api_route(
+        "/.well-known/trustee-key.json",
+        trustee_key,
+        methods=["GET"],
+        operation_id="get_trustee_key",
+        tags=["Discovery"],
+        summary="Trustee's receipt-signing public key",
+        description="The Ed25519 key that signs settlement receipts (urlsafe-base64). Pin it to verify them offline.",
     )
     router.add_api_route(
         "/.well-known/agent-card.json",

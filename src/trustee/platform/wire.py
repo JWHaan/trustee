@@ -50,6 +50,21 @@ def revoke_signing_bytes(agent_id: str) -> bytes:
     return canonical_json({"revoke": agent_id})
 
 
+def intent_revoke_signing_bytes(agent_id: str) -> bytes:
+    return canonical_json({"revoke_intent": agent_id})
+
+
+def funding_setup_signing_bytes(principal: str, nonce: str, funding_ref: str | None = None) -> bytes:
+    """What a principal signs to start a funding source. `funding_ref` is the handle it wants (None: random)."""
+    return canonical_json(
+        {"action": "funding_setup", "principal": principal, "nonce": nonce, "funding_ref": funding_ref}
+    )
+
+
+def funding_revoke_signing_bytes(principal: str, funding_ref: str) -> bytes:
+    return canonical_json({"action": "funding_revoke", "principal": principal, "funding_ref": funding_ref})
+
+
 class MandateIn(BaseModel):
     """A Mandate as JSON. Decimals travel as strings so the signed bytes survive the round trip."""
 
@@ -141,3 +156,36 @@ class ResolveIn(BaseModel):
     )
     operator: str = Field(min_length=1, description="Name of the human making the ruling. Recorded in the ledger.")
     reason: str = Field(default="", description="Why. Recorded in the ledger, truncated to 120 characters on refunds.")
+
+
+class FundingSetupIn(BaseModel):
+    nonce: str = Field(min_length=8, max_length=128, description="Any fresh string; part of what the principal signs.")
+    funding_ref: str | None = Field(
+        default=None,
+        pattern=ID_PATTERN,
+        description=(
+            "The handle you want for this funding source (an opaque id). Omit it and Trustee picks a random one. "
+            "Choosing it lets you sign an intent mandate that names it before the consent is given."
+        ),
+    )
+    signature: str = Field(
+        description=(
+            "Principal's signature over canonical JSON {action: funding_setup, principal, nonce, funding_ref} "
+            "(funding_ref null when omitted)."
+        )
+    )
+
+
+class FundingRevokeIn(BaseModel):
+    signature: str = Field(
+        description="Principal's signature over canonical JSON {action: funding_revoke, principal, funding_ref}."
+    )
+
+
+class ReceiptVerifyIn(BaseModel):
+    receipt: dict[str, Any] = Field(description="A settlement receipt as returned by GET /v1/deals/{id}/receipt.")
+    contract: dict[str, Any] | None = Field(default=None, description="Optional contract; its digest must match.")
+    intent: dict[str, Any] | None = Field(default=None, description="Optional intent mandate; its digest must match.")
+    events: list[dict[str, Any]] | None = Field(
+        default=None, description="Optional events of the deal (GET /v1/deals/{id}/events): checks the hash chain."
+    )

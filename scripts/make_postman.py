@@ -53,6 +53,14 @@ FORGED_DEAL = "deal-w12-forged-001"
 OVERCAP_DEAL = "deal-w12-overcap-001"
 A2A_DEAL = "deal-w14-a2a-001"
 A2A_FORGED_DEAL = "deal-w14-a2a-forged-001"
+AUTO_PRINCIPAL = "demo-auto-org"
+AUTO_BUYER = "demo-auto-buyer"
+AUTO_DEAL = "deal-w16-auto-001"
+AUTO_FUNDING = "fund-w16-demo"
+AUTO_INSTRUCTION = (
+    "Buy the Q3 2026 returns extract; spend at most $175; only from demo-seller-agent; must match the sha256"
+)
+ISSUED_AT = datetime(2026, 10, 31, 8, 0, 0)
 MANDATE_CAP = Decimal("250.00")
 HONEST_PRICE = Decimal("100.00")
 OVERCAP_PRICE = Decimal("300.00")
@@ -64,9 +72,11 @@ def _lazy_imports() -> dict[str, Any]:
     """Import the trustee package only when building, so reading this file stays cheap."""
     sys.path.insert(0, str(ROOT / "src"))
     from trustee.identity import AgentKey
+    from trustee.intent import IntentMandate
     from trustee.mandate import Mandate
     from trustee.platform.wire import (
         agent_signing_bytes,
+        funding_setup_signing_bytes,
         mandate_to_dict,
         principal_signing_bytes,
     )
@@ -74,6 +84,8 @@ def _lazy_imports() -> dict[str, Any]:
 
     return {
         "AgentKey": AgentKey,
+        "IntentMandate": IntentMandate,
+        "funding_setup_signing_bytes": funding_setup_signing_bytes,
         "Mandate": Mandate,
         "agent_signing_bytes": agent_signing_bytes,
         "mandate_to_dict": mandate_to_dict,
@@ -175,6 +187,61 @@ def build_requests() -> list[dict[str, Any]]:
             evidence={"sha256": digest},
         ).sign(buyer)
         return msg.model_dump(mode="json")
+
+    auto_org, auto_buyer = key(AUTO_PRINCIPAL), key(AUTO_BUYER)
+
+    def auto_contract(deal_id: str, price: Decimal) -> dict[str, Any]:
+        good = m["GoodSpec"](
+            good_id="good-w12-returns-2026q3",
+            description="Q3 2026 returns extract",
+            category="digital",
+            acceptance_criteria=["sha256 matches the contract", "CSV parses"],
+            deliverable_ref=DELIVERABLE_REF,
+            sha256=digest,
+        )
+        base = m["Contract"](
+            deal_id=deal_id,
+            buyer=AUTO_BUYER,
+            seller=SELLER_AGENT,
+            good=good,
+            price=price,
+            deadline=FAR_FUTURE,
+            formed_at=FORMED_AT,
+        )
+        return base.sign(AUTO_BUYER, auto_buyer).sign(SELLER_AGENT, seller).model_dump(mode="json")
+
+    def auto_attest(deal_id: str) -> dict[str, Any]:
+        msg = m["Attest"](
+            msg_id=f"msg-{deal_id}-attest",
+            sender=AUTO_BUYER,
+            ts=ATTESTED_AT,
+            deal_id=deal_id,
+            verdict="accept",
+            reason="sha256 of the delivered bytes matches the contract",
+            evidence={"sha256": digest},
+        ).sign(auto_buyer)
+        return msg.model_dump(mode="json")
+
+    def funding_body() -> dict[str, Any]:
+        nonce = "w16-demo-nonce-001"
+        sig = auto_org.sign(m["funding_setup_signing_bytes"](AUTO_PRINCIPAL, nonce, AUTO_FUNDING))
+        return {"nonce": nonce, "funding_ref": AUTO_FUNDING, "signature": sig}
+
+    def intent_body() -> dict[str, Any]:
+        intent = m["IntentMandate"](
+            intent_id="intent-w16-demo-001",
+            agent_id=AUTO_BUYER,
+            principal=AUTO_PRINCIPAL,
+            instruction=AUTO_INSTRUCTION,
+            funding_ref=AUTO_FUNDING,
+            max_price=Decimal("175.00"),
+            allowed_sellers=[SELLER_AGENT],
+            good_ids=["good-w12-returns-2026q3"],
+            required_criteria=["sha256"],
+            issued_at=ISSUED_AT,
+            expires_at=FAR_FUTURE,
+        ).sign(auto_org)
+        return intent.public()
 
     def rpc(rpc_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params}
@@ -568,6 +635,165 @@ def build_requests() -> list[dict[str, Any]]:
                 "});",
             ],
         },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "1. Register principal",
+            "method": "POST",
+            "path": "/v1/principals",
+            "body": principal_body(AUTO_PRINCIPAL, auto_org),
+            "description": "The human behind the buyer agent proves their key.",
+            "tests": ["pm.test('registered', () => pm.expect([200, 201]).to.include(pm.response.code));"],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "2. Register buyer agent",
+            "method": "POST",
+            "path": "/v1/agents",
+            "body": agent_body(AUTO_BUYER, auto_buyer, AUTO_PRINCIPAL, auto_org, ["buyer"]),
+            "description": "The agent that will pay on its own. Needs the seller from folder 2.",
+            "tests": ["pm.test('registered', () => pm.expect([200, 201]).to.include(pm.response.code));"],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "3. Publish spend mandate",
+            "method": "POST",
+            "path": "/v1/mandates",
+            "body": mandate_body(AUTO_BUYER, AUTO_PRINCIPAL, auto_org, "spend"),
+            "description": "The ordinary spend ceiling. The intent mandate can only narrow what happens inside it.",
+            "tests": ["pm.test('published', () => pm.response.to.have.status(201));"],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "4. Start the one-time funding consent",
+            "method": "POST",
+            "path": "/v1/principals/" + AUTO_PRINCIPAL + "/funding",
+            "body": funding_body(),
+            "description": (
+                "Signed by the principal, with the funding_ref it chose. Without PayPal credentials the source is "
+                "active at once. Against the sandbox the response carries `approve_url`: open it ONCE and approve, "
+                "then PayPal returns to /v1/funding/return and the source turns active. The PayPal vault id is "
+                "never returned."
+            ),
+            "tests": [
+                "pm.test('funding source created', () => {",
+                "  pm.expect([200, 201]).to.include(pm.response.code);",
+                "  const body = pm.response.json();",
+                "  pm.expect(body.funding_ref).to.eql('" + AUTO_FUNDING + "');",
+                "  pm.expect(JSON.stringify(body)).to.not.include('vault_id');",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "5. Publish the signed intent mandate",
+            "method": "POST",
+            "path": "/v1/intents",
+            "body": intent_body(),
+            "description": (
+                "The human's instruction and limits, signed once: at most 175.00, only from demo-seller-agent, the "
+                "contract must commit to a sha256. Publishing the identical document again returns 200."
+            ),
+            "tests": [
+                "pm.test('intent published', () => {",
+                "  pm.expect([200, 201]).to.include(pm.response.code);",
+                "  pm.expect(pm.response.json().intent_mandate_digest).to.have.lengthOf(64);",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "6. Open the deal: the agent pays by itself",
+            "method": "POST",
+            "path": "/v1/deals",
+            "body": auto_contract(AUTO_DEAL, HONEST_PRICE),
+            "description": (
+                "Every intent rule passes, so the funds are held with no approval click. `authority` in the response "
+                "says who authorized the payment and lists each rule's result."
+            ),
+            "tests": [
+                "pm.test('escrowed under the intent mandate', () => {",
+                "  pm.expect([200, 201]).to.include(pm.response.code);",
+                "  const deal = pm.response.json();",
+                "  pm.expect(deal.state).to.be.oneOf(['ESCROWED', 'DELIVERED', 'SETTLED']);",
+                "  pm.expect(deal.authority.human_present).to.eql(false);",
+                "  pm.expect(deal.authority.policy.length).to.be.above(10);",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "7. Record delivery (signed by the seller)",
+            "method": "POST",
+            "path": "/v1/deals/" + AUTO_DEAL + "/delivery",
+            "body": delivery_body(AUTO_DEAL, seller),
+            "description": "Same as folder 2. A repeat after settlement is a 409.",
+            "tests": [
+                "pm.test('recorded (or already settled)', () => pm.expect([200, 409]).to.include(pm.response.code));"
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "8. Attest (signed by the buyer)",
+            "method": "POST",
+            "path": "/v1/deals/" + AUTO_DEAL + "/attest",
+            "body": auto_attest(AUTO_DEAL),
+            "description": "Capture happens only now, after the intent is re-checked at the moment of capture.",
+            "tests": [
+                "pm.test('settled', () => {",
+                "  pm.response.to.have.status(200);",
+                "  pm.expect(pm.response.json().state).to.eql('SETTLED');",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "9. Signed settlement receipt",
+            "method": "GET",
+            "path": "/v1/deals/" + AUTO_DEAL + "/receipt",
+            "description": (
+                "Trustee's Ed25519-signed record of the outcome. Kept in the `receipt` variable for step 10."
+            ),
+            "tests": [
+                "pm.test('signed receipt for an unattended payment', () => {",
+                "  pm.response.to.have.status(200);",
+                "  const r = pm.response.json();",
+                "  pm.expect(r.outcome).to.eql('settled');",
+                "  pm.expect(r.signature).to.be.a('string');",
+                "  pm.expect(r.intent_mandate_digest).to.have.lengthOf(64);",
+                "  pm.collectionVariables.set('receipt', JSON.stringify(r));",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "10. Verify the receipt",
+            "method": "POST",
+            "path": "/v1/receipts/verify",
+            "raw_body": '{"receipt": {{receipt}}}',
+            "description": (
+                "Server-side check of the signature. For a check that trusts no server, run "
+                "`python -m trustee.verify receipt.json --key <public key>`."
+            ),
+            "tests": [
+                "pm.test('signature verifies', () => {",
+                "  pm.response.to.have.status(200);",
+                "  pm.expect(pm.response.json().ok).to.eql(true);",
+                "});",
+            ],
+        },
+        {
+            "folder": "5 · Autonomous payment (intent mandate)",
+            "name": "Trustee receipt-signing key",
+            "method": "GET",
+            "path": "/.well-known/trustee-key.json",
+            "description": "The public key to pin when verifying receipts offline.",
+            "tests": [
+                "pm.test('an Ed25519 key', () => {",
+                "  pm.response.to.have.status(200);",
+                "  pm.expect(pm.response.json().algorithm).to.eql('Ed25519');",
+                "});",
+            ],
+        },
     ]
 
 
@@ -584,7 +810,10 @@ def _request_item(spec: dict[str, Any]) -> dict[str, Any]:
         "url": url,
         "description": spec["description"],
     }
-    if "body" in spec:
+    if "raw_body" in spec:
+        request["header"].append({"key": "Content-Type", "value": "application/json"})
+        request["body"] = {"mode": "raw", "raw": spec["raw_body"], "options": {"raw": {"language": "json"}}}
+    elif "body" in spec:
         request["header"].append({"key": "Content-Type", "value": "application/json"})
         request["body"] = {
             "mode": "raw",
@@ -628,6 +857,7 @@ def build_collection() -> dict[str, Any]:
         "variable": [
             {"key": "baseUrl", "value": DEFAULT_BASE_URL, "type": "string"},
             {"key": "operatorToken", "value": "", "type": "string"},
+            {"key": "receipt", "value": "{}", "type": "string"},
         ],
     }
 

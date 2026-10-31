@@ -17,6 +17,39 @@ export interface Step {
   reason?: string;
 }
 
+/** How the payment was authorized, read from the policy rows. "none" = no intent mandate was in play. */
+export type Authority = "none" | "intent" | "stepup" | "human";
+
+export interface Policy {
+  authority: Authority;
+  rules: Row[];
+  passed: number;
+  failed: number;
+  consent: Row | null;
+  limits: Row | null;
+  decision: Row | null;
+}
+
+export function derivePolicy(rows: Row[]): Policy {
+  const policy = rows.filter((r) => r.kind === "policy");
+  const rules = policy.filter((r) => r.rule !== "");
+  const decision = policy.find((r) => r.event === "policy_decision") ?? null;
+  const approved = rows.some((r) => r.event === "awaiting_approval" || r.event === "payer_approved");
+  let authority: Authority = "none";
+  if (decision?.result === "autonomous") authority = "intent";
+  else if (decision?.result === "step_up") authority = "stepup";
+  else if (approved) authority = "human";
+  return {
+    authority,
+    rules,
+    passed: rules.filter((r) => r.result === "pass").length,
+    failed: rules.filter((r) => r.result === "fail").length,
+    consent: policy.find((r) => r.event === "intent_consent") ?? null,
+    limits: policy.find((r) => r.event === "intent_limits") ?? null,
+    decision,
+  };
+}
+
 const isBuyerMsg = (r: Row, event: string) => r.kind === "msg" && r.event === event;
 
 export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: boolean): Step[] {
@@ -48,6 +81,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
   const voided = snap?.state === "VOIDED" || has((r) => r.kind === "state" && r.state_to === "VOIDED");
   const forged = rejection !== undefined || outcome === "rejected_identity";
 
+  const policy = derivePolicy(rows);
   const finalLabel = forged ? "Rejected" : settled ? "Settled" : voided ? "Refunded" : "Settled or refunded";
   const steps: Step[] = [
     {
@@ -72,13 +106,32 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       key: "mandate",
       label: "Mandates checked",
       status: mandate ? (mandateOk ? "done" : "failed") : "todo",
-      detail: mandate ? (mandateOk ? "both within limits" : "blocked") : "",
+      detail: mandate
+        ? mandateOk
+          ? policy.rules.length
+            ? `both within limits · intent ${policy.passed}/${policy.rules.length} rules`
+            : "both within limits"
+          : "blocked"
+        : "",
     },
     {
       key: "funds",
-      label: "Funds held",
+      label:
+        policy.authority === "intent" && authorize
+          ? "Paid under intent mandate — no human click"
+          : (policy.authority === "stepup" || policy.authority === "human") && authorize && !waiting
+            ? "Approved by human"
+            : "Funds held",
       status: noApproval ? "failed" : authorize && !waiting ? "done" : waiting ? "active" : "todo",
-      detail: noApproval ? "buyer never approved" : waiting ? "awaiting approval" : authorize ? "at PayPal" : "",
+      detail: noApproval
+        ? "buyer never approved"
+        : waiting
+          ? "awaiting approval"
+          : authorize
+            ? policy.authority === "stepup"
+              ? "outside the signed instruction"
+              : "at PayPal"
+            : "",
     },
     {
       key: "delivered",

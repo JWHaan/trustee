@@ -13,6 +13,7 @@ are forwarded onto the same tape by the runner.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,11 +25,13 @@ from ..agents.buyer import ArtifactStore, BuyerAgent, Checker
 from ..agents.seller import SellerAgent
 from ..client import TrusteeClient
 from ..identity import AgentKey
+from ..intent import draft_intent, intent_summary
 from ..ledger import Ledger
 from ..llm import LLM
 from ..mandate import Mandate
 from ..paypal import PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Contract
+from ..verify import verify_receipt
 from .approval import ApprovalWait, wait_for_approval
 from .scenario import Scenario
 
@@ -37,6 +40,8 @@ SELLER_BASE = "tidewater-sales"
 # Principal names are API ids (no spaces): Northwind Outfitters, Tidewater Data Co.
 BUYER_PRINCIPAL = "northwind-outfitters"
 SELLER_PRINCIPAL = "tidewater-data-co"
+
+
 @dataclass
 class OutsideResult:
     view: dict[str, Any]
@@ -45,6 +50,110 @@ class OutsideResult:
     outcome: str | None  # None when the deal ran to the end; else why it stopped
     buyer_id: str
     seller_id: str
+    receipt: dict[str, Any] | None = None  # the platform's signed settlement receipt, once the deal is terminal
+    receipt_verified: bool | None = None  # checked offline against Trustee's published key and the deal's events
+
+
+def publish_funding_and_intent(
+    client: TrusteeClient,
+    *,
+    ledger: Ledger,
+    deal_id: str,
+    paypal: PayPalClient,
+    demo_funding: Callable[[str], str | None] | None,
+    instruction: str | None,
+    principal: str,
+    principal_key: AgentKey,
+    agent_id: str,
+    seller_names: dict[str, str],
+    scenario: Scenario,
+    llm: LLM | None,
+) -> bool:
+    """The human's one-time consent over the public API: vault a funding source, sign an intent, publish it.
+
+    Dry-run: the platform vaults a fake source at once. Against the real sandbox only a pre-registered demo vault
+    (PAYPAL_DEMO_VAULT_ID) is available to a headless run; without it nothing is published and the deal takes the
+    human-present approval path, exactly as before. Returns True when an intent is on file."""
+    if not instruction:
+        return False
+    if paypal.dry_run:
+        funding = client.start_funding(principal, principal_key)
+        ref = funding["funding_ref"] if funding.get("status") == "active" else None
+    else:
+        ref = demo_funding(principal) if demo_funding is not None else None
+    if ref is None:
+        ledger.append(
+            deal_id,
+            "arena",
+            "policy",
+            event="no_funding",
+            note="no vaulted funding source (PAYPAL_DEMO_VAULT_ID is unset): a human approves this payment",
+        )
+        return False
+    draft = draft_intent(
+        instruction,
+        llm if llm is not None and not _is_scripted(llm) else None,
+        agent_id=agent_id,
+        principal=principal,
+        funding_ref=ref,
+        good=scenario.good,
+        known_sellers=seller_names,
+    )
+    client.publish_intent(draft.intent, principal_key)
+    ledger.append(
+        deal_id,
+        principal,
+        "policy",
+        event="intent_consent",
+        intent=draft.intent.digest()[:16],
+        note=f'one-time consent signed by the human: "{draft.intent.instruction}"',
+    )
+    ledger.append(
+        deal_id,
+        principal,
+        "policy",
+        event="intent_limits",
+        note=f"limits the agent may not exceed: {intent_summary(draft.intent)}",
+    )
+    ledger.append(
+        deal_id,
+        principal,
+        "policy",
+        event="funding_vaulted",
+        note="payment method saved at PayPal once (a reference only; the vault id is never shown)",
+    )
+    return True
+
+
+def _is_scripted(llm: Any) -> bool:
+    return getattr(llm, "model", "") == "scripted"
+
+
+def attach_receipt(result: OutsideResult, client: TrusteeClient, ledger: Ledger, deal_id: str) -> OutsideResult:
+    """Fetch the finished deal's signed receipt, verify it offline against the published key, put it on the tape."""
+    if result.view.get("state") not in ("SETTLED", "VOIDED"):
+        return result
+    try:
+        receipt = client.receipt(deal_id)
+        key = str(client.trustee_key()["public_key"])
+        events = client.events(deal_id, limit=1000)["events"]
+    except Exception:  # noqa: BLE001 - evidence must never break a finished deal
+        return result
+    report = verify_receipt(receipt, public_key=key, events=events)
+    result.receipt, result.receipt_verified = receipt, report.ok
+    ledger.append(
+        deal_id,
+        "trustee",
+        "receipt",
+        event="receipt_issued",
+        verified=report.ok,
+        human_present=receipt["human_present"],
+        note=(
+            f"signed {receipt['outcome']} receipt, checked offline: "
+            + ("signature and ledger chain verified" if report.ok else "VERIFICATION FAILED")
+        ),
+    )
+    return result
 
 
 class OutsideFlow:
@@ -62,7 +171,9 @@ class OutsideFlow:
         checkers: dict[str, Checker],
         llm: LLM,
         wait: ApprovalWait,
+        demo_funding: Callable[[str], str | None] | None = None,
     ):
+        self.demo_funding = demo_funding
         self.scenario = scenario
         self.deal_id = deal_id
         # Ids are unique per run: the service keeps agents for good, and every run mints fresh keys.
@@ -162,6 +273,21 @@ class OutsideFlow:
             org_seller,
         )
 
+        publish_funding_and_intent(
+            self._as(self.buyer_id, "one-time consent"),
+            ledger=self.ledger,
+            deal_id=self.deal_id,
+            paypal=self.paypal,
+            demo_funding=self.demo_funding,
+            instruction=sc.instruction,
+            principal=self.buyer_principal,
+            principal_key=org_buyer,
+            agent_id=self.buyer_id,
+            seller_names={"Tidewater": self.seller_id},
+            scenario=sc,
+            llm=self.llm,
+        )
+
         now = datetime.now()
         contract = (
             Contract(
@@ -210,14 +336,23 @@ class OutsideFlow:
 
         final = self._as(self.buyer_id, "deal view").get_deal(self.deal_id)
         evidence = {k: str(v) for k, v in (attest.evidence or {}).items()}
-        return OutsideResult(
-            final,
-            {"verdict": attest.verdict, "reason": attest.reason, "evidence": evidence},
-            2,
-            None,
-            self.buyer_id,
-            self.seller_id,
-        )
+        self._quiet = True
+        try:
+            return attach_receipt(
+                OutsideResult(
+                    final,
+                    {"verdict": attest.verdict, "reason": attest.reason, "evidence": evidence},
+                    2,
+                    None,
+                    self.buyer_id,
+                    self.seller_id,
+                ),
+                self.client,
+                self.ledger,
+                self.deal_id,
+            )
+        finally:
+            self._quiet = False
 
     # -------------------------------------------------------------- approval
 

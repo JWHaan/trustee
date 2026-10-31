@@ -10,14 +10,19 @@ run it in-process.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import httpx
 
 from .identity import AgentKey
+from .intent import IntentMandate
 from .mandate import Mandate
 from .platform.wire import (
     agent_signing_bytes,
+    funding_revoke_signing_bytes,
+    funding_setup_signing_bytes,
+    intent_revoke_signing_bytes,
     mandate_to_dict,
     principal_signing_bytes,
     revoke_signing_bytes,
@@ -114,6 +119,36 @@ class TrusteeClient:
     def revoke_mandate(self, agent_id: str, principal_key: AgentKey) -> dict[str, Any]:
         signature = principal_key.sign(revoke_signing_bytes(agent_id))
         return self._request("POST", f"/v1/mandates/{agent_id}/revoke", {"signature": signature})
+
+    # ------------------------------------------------- intent mandates, funding
+
+    def start_funding(self, principal: str, principal_key: AgentKey, funding_ref: str | None = None) -> dict[str, Any]:
+        """Start the one-time PayPal consent. Returns `funding_ref` and, against real PayPal, the link to open once."""
+        nonce = uuid.uuid4().hex
+        signature = principal_key.sign(funding_setup_signing_bytes(principal, nonce, funding_ref))
+        body = {"nonce": nonce, "funding_ref": funding_ref, "signature": signature}
+        return self._request("POST", f"/v1/principals/{principal}/funding", body)
+
+    def revoke_funding(self, principal: str, funding_ref: str, principal_key: AgentKey) -> dict[str, Any]:
+        signature = principal_key.sign(funding_revoke_signing_bytes(principal, funding_ref))
+        return self._request(
+            "POST", f"/v1/principals/{principal}/funding/{funding_ref}/revoke", {"signature": signature}
+        )
+
+    def publish_intent(self, intent: IntentMandate, principal_key: AgentKey) -> dict[str, Any]:
+        """Sign `intent` with the principal's key and publish it: the one-time consent to unattended purchases."""
+        return self._request("POST", "/v1/intents", intent.sign(principal_key).public())
+
+    def revoke_intent(self, agent_id: str, principal_key: AgentKey) -> dict[str, Any]:
+        signature = principal_key.sign(intent_revoke_signing_bytes(agent_id))
+        return self._request("POST", f"/v1/intents/{agent_id}/revoke", {"signature": signature})
+
+    def receipt(self, deal_id: str) -> dict[str, Any]:
+        """The signed settlement receipt of a finished deal."""
+        return self._request("GET", f"/v1/deals/{deal_id}/receipt")
+
+    def trustee_key(self) -> dict[str, Any]:
+        return self._request("GET", "/.well-known/trustee-key.json")
 
     # ----------------------------------------------------------------- deals
 

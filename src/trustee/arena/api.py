@@ -125,6 +125,9 @@ class RunRecord:
                 "error": self.error,
                 "fallback_from": None,
                 "outcome": None,
+                "receipt": None,
+                "receipt_verified": None,
+                "human_present": None,
             }
         )
         base["events"] = len(self.rows)
@@ -321,6 +324,9 @@ def create_app(
         operator_token=service.operator_token,
         approvals=approvals,
         network=(northwind, tidewater),
+        # Receipts of in-process runs verify against the same published key as the platform's.
+        signing_key=service.signing_key,
+        demo_funding=service.funding.register_demo,
     )
     # Human alerts derive from ledger events (money path untouched). Unset URL => no sink, no subscriber.
     alert_sinks: list[AlertSink] = []
@@ -372,6 +378,13 @@ def create_app(
     async def get_run(run_id: str) -> dict[str, Any]:
         return registry.require(run_id).snapshot()
 
+    @app.get("/api/runs/{run_id}/receipt")
+    async def get_run_receipt(run_id: str) -> dict[str, Any]:
+        rec = registry.require(run_id)
+        if rec.result is None or rec.result.receipt is None:
+            raise HTTPException(status_code=404, detail="this run has no settlement receipt (yet)")
+        return rec.result.receipt
+
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str) -> StreamingResponse:
         rec = registry.require(run_id)
@@ -419,6 +432,7 @@ def create_app(
                     "cheat": s.cheat,
                     "attack": s.attack,
                     "flow": s.flow,
+                    "instruction": s.instruction,
                 }
                 for s in load_scenarios().values()
             ],

@@ -282,6 +282,55 @@
         "title": "Delivery",
         "type": "object"
       },
+      "FundingRevokeIn": {
+        "properties": {
+          "signature": {
+            "description": "Principal's signature over canonical JSON {action: funding_revoke, principal, funding_ref}.",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signature"
+        ],
+        "title": "FundingRevokeIn",
+        "type": "object"
+      },
+      "FundingSetupIn": {
+        "properties": {
+          "funding_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._:@-]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The handle you want for this funding source (an opaque id). Omit it and Trustee picks a random one. Choosing it lets you sign an intent mandate that names it before the consent is given.",
+            "title": "Funding Ref"
+          },
+          "nonce": {
+            "description": "Any fresh string; part of what the principal signs.",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Nonce",
+            "type": "string"
+          },
+          "signature": {
+            "description": "Principal's signature over canonical JSON {action: funding_setup, principal, nonce, funding_ref} (funding_ref null when omitted).",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nonce",
+          "signature"
+        ],
+        "title": "FundingSetupIn",
+        "type": "object"
+      },
       "GoodSpec": {
         "description": "What is being bought. Digital goods only (deliverable end-to-end by agents).",
         "properties": {
@@ -346,6 +395,233 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IntentMandate": {
+        "description": "A principal-signed purchase intent. Frozen in spirit: every change is a new document and a new digest.",
+        "properties": {
+          "agent_id": {
+            "description": "The buyer agent this intent authorizes.",
+            "examples": [
+              "buyer-agent"
+            ],
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "allowed_categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Good categories. Null means any.",
+            "title": "Allowed Categories"
+          },
+          "allowed_sellers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seller agent ids. Null means any.",
+            "title": "Allowed Sellers"
+          },
+          "currency": {
+            "default": "USD",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "After this instant the intent buys nothing.",
+            "title": "Expires At"
+          },
+          "funding_ref": {
+            "description": "Opaque reference to the principal's vaulted PayPal funding source. Never the vault id itself.",
+            "title": "Funding Ref",
+            "type": "string"
+          },
+          "good_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact good ids that may be bought. Null means any.",
+            "title": "Good Ids"
+          },
+          "human_present": {
+            "default": false,
+            "description": "Always false: this intent is for purchases made unattended.",
+            "title": "Human Present",
+            "type": "boolean"
+          },
+          "instruction": {
+            "description": "The principal's own words, verbatim. Signed with the rest.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "intent_id": {
+            "description": "Unique id of this signed intent.",
+            "title": "Intent Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "description": "When the principal signed.",
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Every keyword must appear in the good's description (case-insensitive).",
+            "title": "Keywords"
+          },
+          "max_price": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Largest price of a single purchase.",
+            "examples": [
+              "175.00"
+            ],
+            "title": "Max Price"
+          },
+          "max_purchases": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Most purchases per `window_seconds`.",
+            "title": "Max Purchases"
+          },
+          "max_total": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Most this intent may spend in total.",
+            "title": "Max Total"
+          },
+          "principal": {
+            "description": "The human or company that signs.",
+            "examples": [
+              "acme-procurement"
+            ],
+            "title": "Principal",
+            "type": "string"
+          },
+          "principal_signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Principal's Ed25519 signature, urlsafe-base64.",
+            "title": "Principal Signature"
+          },
+          "require_escrow": {
+            "default": true,
+            "description": "Always true: money moves only after verified delivery.",
+            "title": "Require Escrow",
+            "type": "boolean"
+          },
+          "required_criteria": {
+            "description": "Each entry must be present in the contract: `sha256` means the contract commits to a deliverable hash; anything else must appear in one of the acceptance criteria.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Criteria",
+            "type": "array"
+          },
+          "version": {
+            "default": 1,
+            "description": "Format version of this document.",
+            "title": "Version",
+            "type": "integer"
+          },
+          "window_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Length of the velocity window.",
+            "title": "Window Seconds"
+          }
+        },
+        "required": [
+          "agent_id",
+          "principal",
+          "instruction",
+          "funding_ref",
+          "max_price"
+        ],
+        "title": "IntentMandate",
         "type": "object"
       },
       "MandateIn": {
@@ -528,6 +804,63 @@
         "title": "PrincipalIn",
         "type": "object"
       },
+      "ReceiptVerifyIn": {
+        "properties": {
+          "contract": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional contract; its digest must match.",
+            "title": "Contract"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional events of the deal (GET /v1/deals/{id}/events): checks the hash chain.",
+            "title": "Events"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional intent mandate; its digest must match.",
+            "title": "Intent"
+          },
+          "receipt": {
+            "additionalProperties": true,
+            "description": "A settlement receipt as returned by GET /v1/deals/{id}/receipt.",
+            "title": "Receipt",
+            "type": "object"
+          }
+        },
+        "required": [
+          "receipt"
+        ],
+        "title": "ReceiptVerifyIn",
+        "type": "object"
+      },
       "ResolveIn": {
         "properties": {
           "decision": {
@@ -616,7 +949,7 @@
     }
   },
   "info": {
-    "description": "Trustee is an escrow and arbitration layer for agent-to-agent payments on PayPal. A buyer agent's funds are authorized (held), not captured, until the buyer attests that the seller's delivery matches the contract. Accept captures the funds to the seller. Reject opens a dispute that an arbiter rules on, and a ruling either captures or voids the hold. Dry-run mode (no PayPal credentials) keeps the same API surface.\n\n## Signing scheme\n\nEvery mutating call is attributable to an Ed25519 key. Keys are 32-byte raw public keys, urlsafe-base64. Signed bytes are canonical JSON (sorted keys, no whitespace, UTF-8; Decimals as strings, datetimes as ISO 8601) of the message without its signature field. Signatures are urlsafe-base64. A principal proves its key by signing {principal, public_key}; an agent proves possession by signing its registration body {agent_id, public_key, principal, roles (sorted), paypal_email} and is vouched for by the principal signing the same bytes; a mandate is signed by its principal over every field except principal_signature; a contract carries one signature per party over its sha256 digest; deliveries are signed by the seller and attestations by the buyer. Operator endpoints use an HTTP bearer token.",
+    "description": "Trustee is an escrow and arbitration layer for agent-to-agent payments on PayPal. A buyer agent's funds are authorized (held), not captured, until the buyer attests that the seller's delivery matches the contract. Accept captures the funds to the seller. Reject opens a dispute that an arbiter rules on, and a ruling either captures or voids the hold. Dry-run mode (no PayPal credentials) keeps the same API surface.\n\n## Signing scheme\n\nEvery mutating call is attributable to an Ed25519 key. Keys are 32-byte raw public keys, urlsafe-base64. Signed bytes are canonical JSON (sorted keys, no whitespace, UTF-8; Decimals as strings, datetimes as ISO 8601) of the message without its signature field. Signatures are urlsafe-base64. A principal proves its key by signing {principal, public_key}; an agent proves possession by signing its registration body {agent_id, public_key, principal, roles (sorted), paypal_email} and is vouched for by the principal signing the same bytes; a mandate is signed by its principal over every field except principal_signature; a contract carries one signature per party over its sha256 digest; deliveries are signed by the seller and attestations by the buyer; an intent mandate is signed by its principal over every field except principal_signature, and funding requests by the principal. Settlement receipts are signed by Trustee (key at /.well-known/trustee-key.json). Operator endpoints use an HTTP bearer token.",
     "title": "Trustee Platform API",
     "version": "0.1.0"
   },
@@ -657,6 +990,26 @@
           }
         },
         "summary": "A2A Agent Card",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/.well-known/trustee-key.json": {
+      "get": {
+        "description": "The Ed25519 key that signs settlement receipts (urlsafe-base64). Pin it to verify them offline.",
+        "operationId": "get_trustee_key",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trustee's receipt-signing public key",
         "tags": [
           "Discovery"
         ]
@@ -1506,6 +1859,85 @@
         ]
       }
     },
+    "/v1/deals/{deal_id}/receipt": {
+      "get": {
+        "description": "Issued when the deal is SETTLED or VOIDED: outcome, amount, parties, contract digest, intent-mandate digest, `human_present`, delivery sha256, every policy rule result, PayPal ids, the deal's ledger chain head, and Trustee's Ed25519 signature. Verify it offline with `python -m trustee.verify`, or with `POST /v1/receipts/verify`. The key is at `/.well-known/trustee-key.json`.",
+        "operationId": "get_receipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal is not finished yet."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Signed settlement receipt of a finished deal",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
     "/v1/deals/{deal_id}/resolve": {
       "post": {
         "description": "Operator override for a DISPUTED deal. `release` refunds the buyer and voids the escrow; `settle` captures the held funds to the seller. Terminal deals return a no-op. Needs the operator bearer token (`TRUSTEE_OPERATOR_TOKEN`). Without that variable configured, every call is refused.",
@@ -1655,6 +2087,398 @@
         "summary": "Operator ruling on a disputed deal",
         "tags": [
           "Deals"
+        ]
+      }
+    },
+    "/v1/funding/cancel": {
+      "get": {
+        "description": "Nothing was saved, so nothing is undone.",
+        "operationId": "funding_cancel",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Payer backs out of the one-time PayPal consent (browser redirect)",
+        "tags": [
+          "PayPal"
+        ]
+      }
+    },
+    "/v1/funding/return": {
+      "get": {
+        "description": "PayPal redirects the payer here with `approval_token_id` after the consent. Trustee exchanges it for a payment token and stores it. Replays are no-ops. The response never contains the payment token.",
+        "operationId": "funding_return",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "approval_token_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown consent token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not approved yet, or revoked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed."
+          }
+        },
+        "summary": "Payer returns from the one-time PayPal consent (browser redirect)",
+        "tags": [
+          "PayPal"
+        ]
+      }
+    },
+    "/v1/funding/{funding_ref}": {
+      "get": {
+        "description": "`status` is consent_required, active or revoked. Nothing about the PayPal account is returned.",
+        "operationId": "get_funding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "funding_ref",
+            "required": true,
+            "schema": {
+              "title": "Funding Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown funding source."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read a funding source's status",
+        "tags": [
+          "Autonomy"
+        ]
+      }
+    },
+    "/v1/intents": {
+      "post": {
+        "description": "The AP2 Intent Mandate for a human-not-present purchase. The principal signs the human's own `instruction`, the limits derived from it (`max_price`, `max_total`, `allowed_sellers`, item match, `required_criteria`, `max_purchases` per `window_seconds`, `expires_at`) and the `funding_ref` of a vaulted PayPal funding source. Signed bytes are canonical JSON of every field except `principal_signature`. After this, a contract of that buyer agent that passes every rule is escrowed with no payer click; a hard violation is refused, a soft overrun falls back to human approval. Republishing the same document is a 200; an older `issued_at` is a 409.",
+        "operationId": "publish_intent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentMandate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The intent is not signed by its principal."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The agent belongs to a different principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown agent."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "This intent was revoked, or a newer one is already on file."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed intent, `require_escrow`/`human_present` not at their fixed values, or a `funding_ref` that is not an active funding source of the principal."
+          }
+        },
+        "summary": "Publish a signed intent mandate (consent to unattended purchases)",
+        "tags": [
+          "Autonomy"
+        ]
+      }
+    },
+    "/v1/intents/{agent_id}/revoke": {
+      "post": {
+        "description": "The principal signs canonical JSON `{revoke_intent: agent_id}`. New deals are refused immediately and an autonomous deal still waiting for delivery is held for a human instead of being captured.",
+        "operationId": "revoke_intent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not signed by the agent's principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown agent or no intent on file."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke an agent's intent mandate",
+        "tags": [
+          "Autonomy"
         ]
       }
     },
@@ -2183,6 +3007,252 @@
           "Principals"
         ]
       }
+    },
+    "/v1/principals/{principal}/funding": {
+      "post": {
+        "description": "Signed by the principal. Returns a `funding_ref` (an opaque handle) and the PayPal `approve_url` the human opens ONCE. When PayPal sends them back to `/v1/funding/return`, Trustee vaults the payment method. The PayPal vault id is a secret: it is stored server-side and never returned by any endpoint. Without PayPal credentials (dry-run) the source is active immediately and `approve_url` is null.",
+        "operationId": "start_funding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal",
+            "required": true,
+            "schema": {
+              "title": "Principal",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FundingSetupIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not signed by the principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown principal."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed."
+          }
+        },
+        "summary": "Start the one-time PayPal consent for a funding source",
+        "tags": [
+          "Autonomy"
+        ]
+      }
+    },
+    "/v1/principals/{principal}/funding/{funding_ref}/revoke": {
+      "post": {
+        "description": "Signed by the principal over canonical JSON `{action: funding_revoke, principal, funding_ref}`. Later purchases under an intent that names it are not paid unattended: they step up to human approval.",
+        "operationId": "revoke_funding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal",
+            "required": true,
+            "schema": {
+              "title": "Principal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "funding_ref",
+            "required": true,
+            "schema": {
+              "title": "Funding Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FundingRevokeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not signed by the principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown principal or funding source."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke a funding source",
+        "tags": [
+          "Autonomy"
+        ]
+      }
+    },
+    "/v1/receipts/verify": {
+      "post": {
+        "description": "Checks the signature against THIS Trustee's key, and, when supplied, the contract and intent digests and the ledger hash chain. The same checks run offline in `python -m trustee.verify`; prefer that when you do not want to trust this server.",
+        "operationId": "verify_receipt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiptVerifyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify a settlement receipt (server-side convenience)",
+        "tags": [
+          "Deals"
+        ]
+      }
     }
   },
   "servers": [
@@ -2207,6 +3277,10 @@
     {
       "description": "Signed spending or receiving limits that the deal gate enforces.",
       "name": "Mandates"
+    },
+    {
+      "description": "Human-not-present payments: a signed intent mandate and a vaulted funding source let a buyer agent pay with no per-purchase approval, inside limits Trustee enforces.",
+      "name": "Autonomy"
     },
     {
       "description": "Escrowed deals: open, deliver, attest, inspect, resolve.",

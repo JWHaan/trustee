@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ from ..network.northwind import Northwind, Purchase
 from ..network.tidewater import Tidewater
 from ..paypal import PayPalClient, PayPalError
 from .approval import ApprovalWait
-from .outside import OutsideResult
+from .outside import OutsideResult, attach_receipt
 from .scenario import Scenario
 
 POLL_CAP_SECONDS = 0.25  # the agents read the deal task this often; the PayPal check is throttled separately
@@ -60,7 +61,9 @@ class A2AFlow:
         wait: ApprovalWait,
         northwind: Northwind,
         tidewater: Tidewater,
+        demo_funding: Callable[[str], str | None] | None = None,
     ):
+        self.demo_funding = demo_funding
         self.scenario = scenario
         self.deal_id = deal_id
         self.ledger = ledger
@@ -173,6 +176,10 @@ class A2AFlow:
             "http": self.http,
             "public_url": base + NORTHWIND_MOUNT,
             "observer": self._observe,
+            # The human's one-time consent: Northwind signs an intent mandate from this sentence before it buys.
+            "instruction": sc.instruction,
+            "dry_run": self.paypal.dry_run,
+            "demo_funding": self.demo_funding,
         }
         self.ledger.append(
             self.deal_id,
@@ -201,11 +208,16 @@ class A2AFlow:
                 "escrow": None,
                 "ruling": None,
             }
-        return OutsideResult(
-            view,
-            purchase.attest,
-            purchase.turns,
-            purchase.outcome,
-            self.northwind.identity.agent_id,
-            self.tidewater.identity.agent_id,
+        return attach_receipt(
+            OutsideResult(
+                view,
+                purchase.attest,
+                purchase.turns,
+                purchase.outcome,
+                self.northwind.identity.agent_id,
+                self.tidewater.identity.agent_id,
+            ),
+            client,
+            self.ledger,
+            self.deal_id,
         )

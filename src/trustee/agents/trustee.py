@@ -23,6 +23,11 @@ Reliability rules for the money path:
     was revoked, expired, or out of budget since escrow parks the deal in DISPUTED
     with funds held for a human, rather than moving money without authority or
     silently refunding a seller who delivered;
+  * human-not-present payments (AP2 intent mandate): when the buyer's agent holds a principal-signed intent mandate
+    and its funding source is vaulted, `on_contract` runs the intent's rules (every rule is a `policy` ledger row)
+    and, if all pass, holds the funds with no payer click. A hard violation (forged, revoked, expired, wrong seller)
+    refuses the deal before PayPal; a soft overrun (price above the intent cap, unknown item, ...) falls back to the
+    human-present approval flow with the failing rule explained. The capture-time re-check covers the intent too;
   * funds are never stranded: `tick()` voids past the deal deadline, resolves
     before the PayPal authorization expires, and captures an upheld dispute that
     no human overrode within the dispute window; `resolve_dispute()` is the
@@ -39,6 +44,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from ..identity import AgentRegistry
+from ..intent import Autonomy, IntentDecision, IntentMandate, evaluate_intent
 from ..llm import LLM
 from ..mandate import MandateEngine, MandateReport
 from ..paypal import EscrowOrder, PayPalClient, PayPalError
@@ -97,6 +103,7 @@ class Trustee:
         dispute_window: timedelta = timedelta(hours=72),
         auth_expiry_margin: timedelta = timedelta(hours=24),
         registry: AgentRegistry | None = None,
+        autonomy: Autonomy | None = None,
     ):
         self.deal = deal
         self.mandates = mandates
@@ -107,6 +114,9 @@ class Trustee:
         self._seller_email = seller_email
         self.judge = judge
         self.registry = registry
+        self.autonomy = autonomy
+        # What the receipt needs to say about authority: set when an intent mandate was evaluated for this deal.
+        self._authority: dict[str, Any] | None = None
         self.dispute_window = dispute_window
         self.auth_expiry_margin = auth_expiry_margin
         self.authorized_at: datetime | None = None
@@ -139,9 +149,53 @@ class Trustee:
         if not report.ok:
             self._explanation("mandate gate", contract, "deal refused: " + report.summarize())
             return TrusteeDecision("rejected_mandate", self.deal, report)
+        intent_decision, intent = self._assess_intent(contract, now)
+        vault_id: str | None = None
+        if intent_decision is not None and intent is not None:
+            if intent_decision.outcome == "reject":
+                violations = [f"{r.rule}: {r.observed} vs {r.allowed}" for r in intent_decision.hard_failures]
+                self._log(
+                    "policy",
+                    {
+                        "event": "policy_decision",
+                        "outcome": "reject",
+                        "note": "intent mandate violated, no PayPal call: " + "; ".join(violations),
+                    },
+                )
+                self._explanation("intent mandate", contract, "deal refused: " + "; ".join(violations))
+                return TrusteeDecision("rejected_mandate", self.deal, MandateReport(False, violations))
+            if intent_decision.outcome == "autonomous" and self.autonomy is not None:
+                vault_id = self.autonomy.funding.vault_id(intent.principal, intent.funding_ref)
+            self._authority = {
+                "intent_digest": intent.digest(),
+                "human_present": intent_decision.outcome != "autonomous",
+                "outcome": intent_decision.outcome,
+                "policy": [r.as_payload() for r in intent_decision.rules],
+                "at": (now or datetime.now()).isoformat(),
+            }
+            if intent_decision.outcome == "step_up":
+                why = intent_decision.summarize()
+                self._log(
+                    "policy",
+                    {
+                        "event": "policy_decision",
+                        "outcome": "step_up",
+                        "note": f"outside the signed instruction ({why}): a human must approve this payment",
+                    },
+                )
+            else:
+                self._log(
+                    "policy",
+                    {
+                        "event": "policy_decision",
+                        "outcome": "autonomous",
+                        "note": "all rules passed: paying under the intent mandate, no human click",
+                    },
+                )
         self.deal.transition(DealState.CONTRACTED, "contract accepted")
         rid = self._request_id("authorize-create")
         try:
+            kwargs: dict[str, Any] = {"vault_id": vault_id} if vault_id else {}
             self._escrow = self.paypal.create_and_authorize(
                 amount=contract.price,
                 currency=contract.currency,
@@ -149,6 +203,7 @@ class Trustee:
                 seller_email=self._seller_email,
                 memo=f"trustee escrow {contract.deal_id} ({contract.good.description[:60]})",
                 request_id=rid,
+                **kwargs,
             )
         except PayPalError as exc:
             self._log("paypal", {"error": str(exc)[:300], "op": "authorize", "request_id": rid})
@@ -181,8 +236,14 @@ class Trustee:
             },
         )
         self.authorized_at = now or datetime.now()
-        self.deal.transition(DealState.ESCROWED, "funds held in PayPal escrow")
+        auto = self._authority is not None and not self._authority["human_present"]
+        if self._authority is not None and self._authority["outcome"] == "step_up":
+            # The offline paths authorize at once: say that the human approval is simulated rather than imply a click.
+            self._log("note", {"op": "approval", "explanation": "step-up approval simulated: dry-run has no payer"})
+        reason = "funds held under the intent mandate, no human click" if auto else "funds held in PayPal escrow"
+        self.deal.transition(DealState.ESCROWED, reason)
         self.mandates.reserve(contract)
+        self._note_purchase(contract)
         self._explanation("escrow", contract, f"escrow opened: {escrow.order_id}, {contract.price} held")
         return TrusteeDecision("escrowed", self.deal, report, escrow)
 
@@ -375,6 +436,7 @@ class Trustee:
                 self._escrow.status = "voided"
                 self._escrow.details["void_reason"] = f"reconciled from {source}"
             self.mandates.release(contract)
+            self._drop_purchase(contract)
             self._log("reconcile", {"op": "void", "source": source, "note": "PayPal reports the hold voided"})
             self.deal.transition(DealState.VOIDED, f"reconciled: PayPal voided the authorization ({source})")
             self._explanation("reconcile", contract, "PayPal confirms the hold was voided; buyer keeps funds")
@@ -498,6 +560,8 @@ class Trustee:
         escrow = self._raise_escrow()
         if recheck:
             report = self.mandates.recheck(contract, now)
+            if report.ok:
+                report = self._recheck_intent(contract, now)
             if not report.ok:
                 return self._hold_for_mandate(contract, report)
         rid = self._request_id("capture")
@@ -530,6 +594,7 @@ class Trustee:
         self._escrow = escrow
         self._log("paypal", {"op": "void", "order_id": escrow.order_id, "note": "funds released to buyer"})
         self.mandates.release(contract)
+        self._drop_purchase(contract)
         self.deal.transition(DealState.VOIDED, transition_reason or "arbitration released funds (refund)")
         self._explanation("unwind", contract, f"voided; buyer refunded — clause: {clause}")
         return TrusteeDecision("voided", self.deal, escrow=escrow)
@@ -555,6 +620,80 @@ class Trustee:
             self._explanation("settle", contract, f"capture withheld, funds still held: {note}")
         action = "disputed" if self.deal.state == DealState.DISPUTED else "rejected_mandate"
         return TrusteeDecision(action, self.deal, report, self._escrow, explanation=note)
+
+    # ------------------------------------------------------------- intent mandate
+
+    def _intent_state(self, contract: Contract, now: datetime | None, *, check_funding: bool = True):
+        """(decision, intent) for the buyer's intent mandate, or (None, None) when there is none to apply."""
+        if self.autonomy is None:
+            return None, None
+        intent = self.autonomy.book.get(contract.buyer)
+        if intent is None:
+            return None, None
+        when = now or datetime.now()
+        window = timedelta(seconds=intent.window_seconds) if intent.window_seconds else None
+        decision = evaluate_intent(
+            intent,
+            contract,
+            registry=self.registry,
+            principals=self.autonomy.principals,
+            revoked=self.autonomy.book.is_revoked(contract.buyer),
+            committed=self.mandates.committed(contract.buyer, exclude_deal=contract.deal_id),
+            recent_purchases=self.autonomy.book.recent(contract.buyer, window, when, exclude_deal=contract.deal_id),
+            funding_active=self.autonomy.funding.is_active(intent.principal, intent.funding_ref),
+            now=when,
+            check_funding=check_funding,
+        )
+        return decision, intent
+
+    def _assess_intent(
+        self, contract: Contract, now: datetime | None
+    ) -> tuple[IntentDecision | None, IntentMandate | None]:
+        """Evaluate and LEDGER every rule of the buyer's intent mandate (one `policy` row per rule)."""
+        decision, intent = self._intent_state(contract, now)
+        if decision is None or intent is None:
+            return None, None
+        self._log(
+            "policy",
+            {
+                "event": "intent_mandate",
+                "intent": intent.digest()[:16],
+                "note": (
+                    f"intent mandate {intent.digest()[:12]} signed by {intent.principal}: {intent.instruction[:140]}"
+                ),
+            },
+        )
+        for rule in decision.rules:
+            self._log("policy", {"event": "policy_rule", **rule.as_payload()})
+        return decision, intent
+
+    def _recheck_intent(self, contract: Contract, now: datetime | None) -> MandateReport:
+        """At capture: an autonomous deal must still satisfy its intent. Funding is not re-asked: the funds are held."""
+        if self._authority is None or self._authority["human_present"]:
+            return MandateReport(True)
+        decision, intent = self._intent_state(contract, now, check_funding=False)
+        if decision is None:
+            return MandateReport(False, ["intent mandate no longer on file"])
+        if intent is not None and intent.digest() != self._authority["intent_digest"]:
+            return MandateReport(False, ["the intent mandate changed since the escrow opened"])
+        failed = decision.failed
+        self._log(
+            "policy",
+            {
+                "event": "policy_recheck",
+                "outcome": "pass" if not failed else "fail",
+                "note": "intent mandate re-checked at capture: " + decision.summarize(),
+            },
+        )
+        return MandateReport(not failed, [f"{r.rule}: {r.observed} vs {r.allowed}" for r in failed])
+
+    def _note_purchase(self, contract: Contract) -> None:
+        if self.autonomy is not None and self._authority is not None and not self._authority["human_present"]:
+            self.autonomy.book.note_purchase(contract.deal_id, contract.buyer, self.authorized_at or datetime.now())
+
+    def _drop_purchase(self, contract: Contract) -> None:
+        if self.autonomy is not None:
+            self.autonomy.book.drop_purchase(contract.deal_id)
 
     def _override_recheck(self, contract: Contract) -> dict[str, Any]:
         report = self.mandates.recheck(contract)
@@ -637,6 +776,7 @@ class Trustee:
                 "last_delivery": self._last_delivery.model_dump(mode="json") if self._last_delivery else None,
                 "capture_block": self._capture_block,
                 "needs_attention": self.needs_attention,
+                "autonomy": self._authority,
                 "buyer_email": self._buyer_email,
                 "seller_email": self._seller_email,
                 "dispute_window_s": self.dispute_window.total_seconds(),
@@ -654,6 +794,7 @@ class Trustee:
         ledger=None,
         judge: Judge | None = None,
         registry: AgentRegistry | None = None,
+        autonomy: Autonomy | None = None,
         on_transition=None,
         buyer_email: str | None = None,
         seller_email: str | None = None,
@@ -678,7 +819,9 @@ class Trustee:
             dispute_window=dispute_window or timedelta(seconds=snapshot["dispute_window_s"]),
             auth_expiry_margin=auth_expiry_margin or timedelta(seconds=snapshot["auth_expiry_margin_s"]),
             registry=registry,
+            autonomy=autonomy,
         )
+        trustee._authority = snapshot.get("autonomy")
         trustee._escrow = EscrowOrder(**snapshot["escrow"]) if snapshot["escrow"] else None
         trustee.authorized_at = _parse(snapshot["authorized_at"])
         trustee.dispute_deadline = _parse(snapshot["dispute_deadline"])

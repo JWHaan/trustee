@@ -84,7 +84,9 @@ def outcome(snapshot: dict[str, Any]) -> str | None:
     return None
 
 
-def receipt_data(snapshot: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+def receipt_data(
+    snapshot: dict[str, Any], contract: dict[str, Any], record_receipt: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The facts a counterparty needs to book the result. Money and ids come from the deal, never from a model."""
     escrow = snapshot.get("escrow") or {}
     details = escrow.get("details") or {}
@@ -105,6 +107,13 @@ def receipt_data(snapshot: dict[str, Any], contract: dict[str, Any]) -> dict[str
         if ruling is None
         else {"decision": ruling["decision"], "clause": ruling["clause"], "reasoning": ruling["reasoning"]},
     }
+    signed = record_receipt.get("signed") if record_receipt else None
+    if signed:
+        # The same Ed25519-signed document as GET /v1/deals/{id}/receipt, so a counterparty can verify it offline.
+        receipt["humanPresent"] = signed.get("human_present")
+        if signed.get("intent_mandate_digest"):
+            receipt["intentMandateDigest"] = signed["intent_mandate_digest"]
+        receipt["signedReceipt"] = signed
     capture_id = details.get("capture_id") or (details.get("id") if snapshot["state"] == "SETTLED" else None)
     if capture_id:
         receipt["captureId"] = capture_id
@@ -201,7 +210,7 @@ def deal_task(record: dict[str, Any], *, include_artifacts: bool = True) -> Task
                 artifactId=RECEIPT_ARTIFACT_ID,
                 name="settlement-receipt",
                 description="What happened to the money, with the ids to reconcile it.",
-                parts=[data_part(receipt_data(snapshot, contract))],
+                parts=[data_part(receipt_data(snapshot, contract, {"signed": record.get("receipt")}))],
             )
         ]
     # Trustee keeps no per-message conversation, so `history` is never returned (any historyLength is honored

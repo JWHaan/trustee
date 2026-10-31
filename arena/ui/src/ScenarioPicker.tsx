@@ -1,4 +1,4 @@
-import { Gavel, Handshake, KeyRound, Loader, Network, Server } from "lucide-react";
+import { Gavel, Handshake, KeyRound, Loader, Network, Server, UserCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Mode, ScenarioInfo } from "./api";
 import { money } from "./describe";
@@ -39,6 +39,13 @@ const META: Record<string, Meta> = {
     outcome: "Settles via API",
     tone: "good",
     who: "External agents over HTTP",
+  },
+  overreach: {
+    icon: <UserCheck size={18} aria-hidden="true" />,
+    blurb: "The seller will not go below $190 but the human said $175 at most; the agent cannot pay alone.",
+    outcome: "Steps up to a human",
+    tone: "refund",
+    who: "Northwind + Tidewater + human approval",
   },
   a2a: {
     icon: <Network size={18} aria-hidden="true" />,
