@@ -198,7 +198,9 @@ def test_sweep_closes_a_deal_paypal_permanently_refuses_to_authorize():
     try once and close the deal (nothing held), not retry every tick until PayPal locks the order."""
     w, fake = approved_world()
     fake.order_status = "APPROVED"
-    refusal = httpx.Response(422, json={"name": "UNPROCESSABLE_ENTITY", "details": [{"issue": "PAYEE_ACCOUNT_INVALID"}]})
+    refusal = httpx.Response(
+        422, json={"name": "UNPROCESSABLE_ENTITY", "details": [{"issue": "PAYEE_ACCOUNT_INVALID"}]}
+    )
     fake.fail["/authorize"] = [refusal] * 5
     assert ("deal-1", "voided") in w.service.sweep(T0 + timedelta(minutes=1))
     assert state(w) == "VOIDED"
