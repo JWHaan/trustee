@@ -434,7 +434,9 @@ def create_app(
                     "flow": s.flow,
                     "instruction": s.instruction,
                 }
+                # `partial` is listed (and so shown in the UI) only with ARENA_PARTIAL_SCENARIO=1.
                 for s in load_scenarios().values()
+                if s.partial is None or os.environ.get("ARENA_PARTIAL_SCENARIO") == "1"
             ],
             "modes": list(MODES),
         }

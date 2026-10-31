@@ -33,6 +33,9 @@ contract formed
        reject -> arbiter -> void (refund)  |  deadline lapse -> auto-void
 ```
 
+Contracts can opt in to pro-rata settlement (a rejected delivery pays for its valid share) and the sweeper can
+renew held authorizations after PayPal's 3-day honor period: see [docs/PARTIAL_CAPTURE.md](docs/PARTIAL_CAPTURE.md).
+
 The LLM proposes and explains; the policy layer is the only thing that can
 touch PayPal. Terminal states are immutable; webhook replays are idempotent
 no-ops — funds can never double-settle or strand.

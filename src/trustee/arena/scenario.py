@@ -15,7 +15,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
-from ..protocol import GoodSpec
+from ..protocol import GoodSpec, PartialTerms
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -38,6 +38,7 @@ class Scenario:
     # The human's own words, signed once as an intent mandate so the buyer agent can pay with no click. None: the
     # deal uses the human-present approval flow exactly as before.
     instruction: str | None = None
+    partial: PartialTerms | None = None  # pro-rata settlement term signed into the contract
 
     @property
     def opening_price(self) -> Decimal:
@@ -61,6 +62,7 @@ def _parse(raw: dict) -> Scenario:
         flow=raw.get("flow", "negotiated"),
         agreed_price=Decimal(str(raw["agreed_price"])) if raw.get("agreed_price") else None,
         instruction=raw.get("instruction"),
+        partial=PartialTerms.model_validate(raw["partial"]) if raw.get("partial") else None,
     )
 
 

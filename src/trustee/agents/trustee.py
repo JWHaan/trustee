@@ -41,12 +41,14 @@ import logging
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 from ..identity import AgentRegistry
 from ..intent import Autonomy, IntentDecision, IntentMandate, evaluate_intent
 from ..llm import LLM
 from ..mandate import MandateEngine, MandateReport
+from ..partial import PartialSettlement, compute_partial
 from ..paypal import EscrowOrder, PayPalClient, PayPalError
 from ..protocol import Attest, Contract, Delivery, verify_signature
 from ..state import Deal, DealState, IllegalTransition
@@ -56,6 +58,9 @@ log = logging.getLogger(__name__)
 
 # PayPal authorizations are valid for 29 days (3-day honor period inside that).
 AUTH_VALIDITY = timedelta(days=29)
+# A reauthorization is allowed once the 3-day honor period of the current authorization is over.
+HONOR_PERIOD = timedelta(days=3)
+REAUTH_RETRY_BACKOFF = timedelta(hours=1)
 
 
 def paypal_issue(exc: PayPalError) -> str:
@@ -129,6 +134,10 @@ class Trustee:
         self._last_delivery: Delivery | None = None
         self._capture_block: str | None = None  # last reason a capture was held for mandate reasons
         self.needs_attention: str | None = None  # PayPal says something our state cannot follow; a human looks
+        self.settlement: dict[str, Any] | None = None  # set only by a pro-rata (partial) capture
+        self.reauthorized_at: datetime | None = None
+        self.reauth_count = 0
+        self._reauth_retry_after: datetime | None = None  # in memory only: throttles retries after a failure
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------ public API
@@ -289,6 +298,18 @@ class Trustee:
         if attest.verdict == "accept":
             return self._settle(contract, "buyer attested accept; funds captured", now=now)
 
+        # reject, but the contract allows pro-rata settlement and the buyer's machine-checked counts
+        # qualify: capture the valid share. The amount is arithmetic on the counts, never a judge's call.
+        if self._ruling is None:
+            partial = compute_partial(contract, attest.evidence)
+            if partial is not None:
+                return self._settle(
+                    contract,
+                    f"buyer rejected part of the delivery; {partial.label()}",
+                    now=now,
+                    partial=partial,
+                )
+
         # reject: the arbiter rules; without one, the Trustee applies its
         # built-in policy. Ruling decides whether the escrow is voided.
         self.deal.transition(DealState.DISPUTED, f"buyer rejected: {attest.reason[:120]}")
@@ -367,6 +388,51 @@ class Trustee:
                         contract, "auth_expiry", "auth_expiry", "authorization expiring; funds released"
                     )
             return noop
+
+    def reauthorize(self, contract: Contract, now: datetime | None = None) -> TrusteeDecision:
+        """Renew a held authorization once its 3-day honor period is over (see `PayPalClient.reauthorize`).
+
+        Acts only while funds are held, the contract deadline is still ahead and the original 29-day
+        window is open, at most once per honor period. On a PayPal failure the hold, the deadline and
+        the void behaviour are untouched; the failure is ledgered and retried after a backoff.
+        The request id counts reauthorizations, so repeating a call whose answer was lost is deduplicated."""
+        now = now or datetime.now()
+        with self._lock:
+            noop = TrusteeDecision("no-op", self.deal, escrow=self._escrow)
+            if self.deal.is_terminal or not self._funds_held() or self.authorized_at is None:
+                return noop
+            if now >= contract.deadline or now >= self.authorized_at + AUTH_VALIDITY:
+                return noop
+            if now < (self.reauthorized_at or self.authorized_at) + HONOR_PERIOD:
+                return noop
+            if self._reauth_retry_after is not None and now < self._reauth_retry_after:
+                return noop
+            escrow = self._raise_escrow()
+            previous = escrow.authorization_id
+            rid = self._request_id(f"reauthorize-{self.reauth_count + 1}")
+            try:
+                escrow = self.paypal.reauthorize(escrow, request_id=rid)
+            except PayPalError as exc:
+                self._reauth_retry_after = now + REAUTH_RETRY_BACKOFF
+                self._paypal_failed("reauthorize", rid, exc)
+                return TrusteeDecision(
+                    "error", self.deal, escrow=self._escrow, explanation=f"reauthorize failed: {exc}"
+                )
+            self._escrow = escrow
+            self.reauth_count += 1
+            self.reauthorized_at = now
+            self._reauth_retry_after = None
+            self._log(
+                "paypal",
+                {
+                    "op": "reauthorize",
+                    "order_id": escrow.order_id,
+                    "authorization_id": escrow.authorization_id,
+                    "previous_authorization_id": previous,
+                    "note": "hold renewed after the honor period; capture and void use the new authorization id",
+                },
+            )
+            return TrusteeDecision("reauthorized", self.deal, escrow=escrow)
 
     def on_approved(self, contract: Contract, now: datetime | None = None) -> TrusteeDecision:
         """The payer approved the order at PayPal -> re-check authority -> hold the funds.
@@ -552,7 +618,13 @@ class Trustee:
         )
 
     def _settle(
-        self, contract: Contract, reason: str, *, now: datetime | None = None, recheck: bool = True
+        self,
+        contract: Contract,
+        reason: str,
+        *,
+        now: datetime | None = None,
+        recheck: bool = True,
+        partial: PartialSettlement | None = None,
     ) -> TrusteeDecision:
         """Capture to the seller and move to SETTLED. PayPal failure -> "error", state unchanged.
         A failed mandate recheck holds the funds instead (see `_hold_for_mandate`)."""
@@ -566,16 +638,57 @@ class Trustee:
                 return self._hold_for_mandate(contract, report)
         rid = self._request_id("capture")
         try:
-            escrow = self.paypal.capture(escrow, request_id=rid)
+            if partial is None:
+                escrow = self.paypal.capture(escrow, request_id=rid)
+            else:
+                # final_capture closes the authorization: PayPal releases the unpaid rest to the buyer.
+                escrow = self.paypal.capture(
+                    escrow,
+                    amount=Decimal(partial.captured),
+                    currency=partial.currency,
+                    final_capture=True,
+                    request_id=rid,
+                )
         except PayPalError as exc:
             self._paypal_failed("capture", rid, exc)
             self._explanation("settle", contract, f"capture failed, funds still held: {exc}")
             return TrusteeDecision("error", self.deal, escrow=self._escrow, explanation=f"capture failed: {exc}")
         self._escrow = escrow
-        self._log("paypal", {"op": "capture", "order_id": escrow.order_id, "note": "settled to seller"})
-        self.mandates.commit(contract)
+        if partial is None:
+            self._log("paypal", {"op": "capture", "order_id": escrow.order_id, "note": "settled to seller"})
+            self.mandates.commit(contract)
+        else:
+            self.settlement = partial.as_dict()
+            self._log(
+                "paypal",
+                {
+                    "op": "capture",
+                    "order_id": escrow.order_id,
+                    "amount": f"{partial.captured} {partial.currency}",
+                    "note": f"partial capture to seller, rest released to buyer: {partial.label()}",
+                },
+            )
+            self._log(
+                "settlement",
+                {
+                    "event": "partial_settlement",
+                    "basis": partial.basis,
+                    "units_valid": partial.units_valid,
+                    "units_total": partial.units_total,
+                    "captured": partial.captured,
+                    "released": partial.released,
+                    "price": f"{partial.captured} {partial.currency}",
+                    "note": f"{partial.label()}; {partial.released} {partial.currency} released to buyer",
+                },
+            )
+            self.mandates.commit(contract, Decimal(partial.captured))
         self.deal.transition(DealState.SETTLED, reason)
-        self._explanation("settle", contract, f"settled: {escrow.details.get('capture_id', escrow.order_id)}")
+        if partial is not None:
+            self._explanation(
+                "settle", contract, f"{partial.label()}: {escrow.details.get('capture_id', escrow.order_id)}"
+            )
+        else:
+            self._explanation("settle", contract, f"settled: {escrow.details.get('capture_id', escrow.order_id)}")
         return TrusteeDecision("settled", self.deal, escrow=escrow)
 
     def _refund(
@@ -765,7 +878,7 @@ class Trustee:
         Collaborators (mandates, paypal, ledger, llm, judge, registry) are not state:
         `from_snapshot` takes them again."""
         with self._lock:
-            return {
+            snap: dict[str, Any] = {
                 "deal_id": self.deal.deal_id,
                 "state": self.deal.state.value,
                 "history": [list(h) for h in self.deal.history],
@@ -782,6 +895,13 @@ class Trustee:
                 "dispute_window_s": self.dispute_window.total_seconds(),
                 "auth_expiry_margin_s": self.auth_expiry_margin.total_seconds(),
             }
+            # Added only when set, so a deal that never used these features snapshots exactly as before.
+            if self.settlement is not None:
+                snap["settlement"] = dict(self.settlement)
+            if self.reauth_count:
+                snap["reauth_count"] = self.reauth_count
+                snap["reauthorized_at"] = _iso(self.reauthorized_at)
+            return snap
 
     @classmethod
     def from_snapshot(
@@ -829,6 +949,9 @@ class Trustee:
         trustee._last_delivery = Delivery(**snapshot["last_delivery"]) if snapshot["last_delivery"] else None
         trustee._capture_block = snapshot.get("capture_block")
         trustee.needs_attention = snapshot.get("needs_attention")
+        trustee.settlement = snapshot.get("settlement")
+        trustee.reauth_count = int(snapshot.get("reauth_count") or 0)
+        trustee.reauthorized_at = _parse(snapshot.get("reauthorized_at"))
         return trustee
 
     def _raise_escrow(self) -> EscrowOrder:

@@ -47,6 +47,32 @@
       "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
     },
     {
+      "name": "partial",
+      "title": "Partial delivery",
+      "blurb": "Tidewater ships the file it committed to, but 500 of its 5,000 rows fail Northwind's row checks. The contract carries a signed pro-rata term, so Trustee captures the valid 90% ($140.40 of $156.00) and releases the rest to Northwind.",
+      "good": {
+        "good_id": "returns-dataset-2026q3",
+        "description": "Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+          "at least 5000 rows, no blank order_id or refund_usd"
+        ],
+        "deliverable_ref": "returns-2026q3-partial.csv",
+        "sha256": "ad20b22786ee439aa8923a76ff7493b541c80a43a88e50660a9e895d6e834704"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest",
+      "partial": {
+        "basis": "units",
+        "min_fraction": "0.5"
+      }
+    },
+    {
       "name": "forged",
       "title": "Impostor seller",
       "blurb": "Someone who is not Tidewater signs the contract as Tidewater. Trustee checks the signature against the registered key, refuses before any money moves, and PayPal is never called.",

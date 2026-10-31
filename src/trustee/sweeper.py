@@ -12,6 +12,7 @@ cron, test) calls `tick()` on a schedule.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime
 
@@ -22,7 +23,11 @@ log = logging.getLogger(__name__)
 
 
 class DeadlineSweeper:
-    def __init__(self) -> None:
+    """`reauthorize` (default: env TRUSTEE_REAUTHORIZE=1, else off) also renews held authorizations
+    after PayPal's 3-day honor period, for deals whose contract deadline is still ahead."""
+
+    def __init__(self, reauthorize: bool | None = None) -> None:
+        self.reauthorize = os.environ.get("TRUSTEE_REAUTHORIZE") == "1" if reauthorize is None else bool(reauthorize)
         self._lock = threading.Lock()
         self._deals: dict[str, tuple[Trustee, Contract]] = {}
 
@@ -54,6 +59,11 @@ class DeadlineSweeper:
             except Exception:  # noqa: BLE001 - isolate deals from each other
                 log.exception("sweeper: tick failed for %s", deal_id)
                 continue
+            if decision.action == "no-op" and self.reauthorize:
+                try:
+                    decision = trustee.reauthorize(contract, now)
+                except Exception:  # noqa: BLE001 - a renewal problem must never stop the sweep
+                    log.exception("sweeper: reauthorize failed for %s", deal_id)
             if decision.action != "no-op":
                 results.append((deal_id, decision))
             if trustee.deal.is_terminal:

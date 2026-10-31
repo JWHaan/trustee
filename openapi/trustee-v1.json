@@ -173,6 +173,17 @@
           "good": {
             "$ref": "#/components/schemas/GoodSpec"
           },
+          "partial": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PartialTerms"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional pro-rata settlement term. Absent means all-or-nothing, as before."
+          },
           "price": {
             "anyOf": [
               {
@@ -772,6 +783,37 @@
           "max_amount"
         ],
         "title": "MandateIn",
+        "type": "object"
+      },
+      "PartialTerms": {
+        "description": "Opt-in pro-rata settlement, agreed and signed by both parties inside the Contract.\n\nWhen the buyer rejects a delivery whose evidence carries machine-checked counts\n(`units_valid` of `units_total`), Trustee may capture `price * units_valid / units_total`\n(rounded down to the cent) instead of voiding everything. It only does so when the valid\nfraction is at least `min_fraction`; below that, the ordinary reject path applies.",
+        "properties": {
+          "basis": {
+            "const": "units",
+            "default": "units",
+            "description": "What is counted. Only `units` (rows, items) exists.",
+            "title": "Basis",
+            "type": "string"
+          },
+          "min_fraction": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Smallest valid fraction (0 < x <= 1) that still earns a pro-rata payment, e.g. 0.5.",
+            "title": "Min Fraction"
+          }
+        },
+        "required": [
+          "min_fraction"
+        ],
+        "title": "PartialTerms",
         "type": "object"
       },
       "PrincipalIn": {

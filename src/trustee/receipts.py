@@ -116,4 +116,12 @@ def build_receipt(
         "issued_at": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
         "trustee_key": key.public_key_b64,
     }
+    settlement = snapshot.get("settlement")
+    if settlement and state == "SETTLED":
+        # A pro-rata capture moved less than the contract price: sign what actually moved. Receipts for deals
+        # without a partial settlement keep exactly the fields above.
+        body["amount"] = str(settlement["captured"])
+        body["contract_amount"] = str(contract.price)
+        body["released"] = str(settlement["released"])
+        body["settlement"] = dict(settlement)
     return {**body, "signature": key.sign(receipt_signing_bytes(body))}

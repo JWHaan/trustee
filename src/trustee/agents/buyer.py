@@ -26,6 +26,7 @@ from .negotiator import Negotiator
 log = logging.getLogger(__name__)
 
 Checker = Callable[[Path, str], tuple[bool, str]]  # (artifact, good_id) -> (ok, detail)
+UnitCounter = Callable[[Path, str], tuple[int, int]]  # (artifact, good_id) -> (units_valid, units_total)
 
 
 @dataclass
@@ -80,8 +81,10 @@ class BuyerAgent(Negotiator):
         store: ArtifactStore,
         checkers: dict[str, Checker] | None = None,
         ledger: Ledger | None = None,
+        counters: dict[str, UnitCounter] | None = None,
     ):
         super().__init__(agent_id=agent_id, role="buyer", llm=llm, good=good)
+        self.counters = counters or {}
         self.budget = budget
         self.checkers = checkers or {}
         self.store = store
@@ -156,6 +159,18 @@ class BuyerAgent(Negotiator):
             evidence["checker"] = detail
             if not ok:
                 failures.append(detail)
+
+        # 3. contracts with a pro-rata term: count the valid units in the bytes that arrived, so the
+        #    Trustee can price a partial settlement. Plain arithmetic by a registered counter, no LLM.
+        counter = self.counters.get(contract.good.good_id)
+        if failures and contract.partial is not None and counter is not None:
+            try:
+                valid, total = counter(received_path, contract.good.good_id)
+            except Exception:  # noqa: BLE001 - no counts means the ordinary reject path
+                log.warning("unit counter failed for %s", contract.good.good_id, exc_info=True)
+            else:
+                evidence["units_valid"] = str(valid)
+                evidence["units_total"] = str(total)
 
         verdict: Literal["accept", "reject"] = "accept" if not failures else "reject"
         reason = self._summarize(failures or ["all acceptance criteria met"])
