@@ -21,7 +21,7 @@ import time
 import uuid
 from decimal import Decimal
 
-from trustee.paypal import PayPalClient, PayPalError
+from trustee.paypal import PayPalClient, PayPalError, sandbox_emails
 
 POLL_SECONDS = 3.0
 
@@ -64,7 +64,11 @@ def wait_for_approval(client: PayPalClient, order_id: str, timeout: float, poll:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--amount", default="1.00", help="amount in USD (sandbox money)")
-    parser.add_argument("--seller-email", default="seller-sandbox@trustee.dev", help="a sandbox business account")
+    parser.add_argument(
+        "--seller-email",
+        default=sandbox_emails()[1],
+        help="a sandbox business account (default: $PAYPAL_SELLER_EMAIL)",
+    )
     parser.add_argument("--timeout", type=float, default=300.0, help="seconds to wait for approval")
     parser.add_argument("--dry-run", action="store_true", help="no network: exercise the same steps locally")
     group = parser.add_mutually_exclusive_group()

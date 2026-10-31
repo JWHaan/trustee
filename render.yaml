@@ -50,6 +50,11 @@ services:
         sync: false
       - key: PAYPAL_ENV
         value: sandbox
+      # The order's payee. Against the real sandbox it MUST be one of your sandbox
+      # business accounts, or PayPal accepts the buyer's approval and then refuses to
+      # authorize. Set it in the dashboard (Testing Tools -> Sandbox Accounts).
+      - key: PAYPAL_SELLER_EMAIL
+        sync: false
       # --- Public URL. Must match the URL Render assigns to this service; if
       #     Render gives a different host, update this value. The PayPal
       #     return/cancel URLs derive from it (/v1/paypal/return and

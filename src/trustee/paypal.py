@@ -41,6 +41,23 @@ BASE_URLS = {
     "live": "https://api-m.paypal.com",
 }
 
+DEFAULT_BUYER_EMAIL = "buyer-sandbox@trustee.dev"
+DEFAULT_SELLER_EMAIL = "seller-sandbox@trustee.dev"
+
+
+def sandbox_emails() -> tuple[str, str]:
+    """(buyer, seller) PayPal emails for demo deals: env PAYPAL_BUYER_EMAIL / PAYPAL_SELLER_EMAIL.
+
+    The seller email is the order's payee, so against the real sandbox it must be one of your sandbox
+    *business* accounts. The placeholder default only works in dry-run: PayPal accepts the order and
+    the payer's approval, then refuses to authorize it, and after a few attempts locks the order with
+    MAX_NUMBER_OF_PAYMENT_ATTEMPTS_EXCEEDED.
+    """
+    return (
+        os.environ.get("PAYPAL_BUYER_EMAIL") or DEFAULT_BUYER_EMAIL,
+        os.environ.get("PAYPAL_SELLER_EMAIL") or DEFAULT_SELLER_EMAIL,
+    )
+
 
 class PayPalError(Exception):
     def __init__(self, message: str, status_code: int | None = None, body: str = ""):

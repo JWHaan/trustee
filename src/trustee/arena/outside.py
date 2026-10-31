@@ -27,7 +27,7 @@ from ..identity import AgentKey
 from ..ledger import Ledger
 from ..llm import LLM
 from ..mandate import Mandate
-from ..paypal import PayPalClient, PayPalError
+from ..paypal import PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Contract
 from .approval import ApprovalWait, wait_for_approval
 from .scenario import Scenario
@@ -37,10 +37,6 @@ SELLER_BASE = "tidewater-sales"
 # Principal names are API ids (no spaces): Northwind Outfitters, Tidewater Data Co.
 BUYER_PRINCIPAL = "northwind-outfitters"
 SELLER_PRINCIPAL = "tidewater-data-co"
-BUYER_EMAIL = "buyer-sandbox@trustee.dev"
-SELLER_EMAIL = "seller-sandbox@trustee.dev"
-
-
 @dataclass
 class OutsideResult:
     view: dict[str, Any]
@@ -132,13 +128,14 @@ class OutsideFlow:
             price=str(price),
         )
 
+        buyer_email, seller_email = sandbox_emails()
         self._as(self.buyer_id, "principal registered").register_principal(self.buyer_principal, org_buyer)
         self._as(self.seller_id, "principal registered").register_principal(self.seller_principal, org_seller)
         self._as(self.buyer_id, "agent registered").register_agent(
-            self.buyer_id, k_buyer, self.buyer_principal, org_buyer, ["buyer"], paypal_email=BUYER_EMAIL
+            self.buyer_id, k_buyer, self.buyer_principal, org_buyer, ["buyer"], paypal_email=buyer_email
         )
         self._as(self.seller_id, "agent registered").register_agent(
-            self.seller_id, k_seller, self.seller_principal, org_seller, ["seller"], paypal_email=SELLER_EMAIL
+            self.seller_id, k_seller, self.seller_principal, org_seller, ["seller"], paypal_email=seller_email
         )
         ceiling = Decimal("500.00")
         category = frozenset({sc.good.category})
