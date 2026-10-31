@@ -234,6 +234,22 @@ c = A2AClient("http://127.0.0.1:8000")
 task = c.call_skill("open-escrow", signed_contract_dict)   # then record-delivery / attest-delivery with task_id=task.id
 ```
 
+### The A2A network: three agents
+
+Northwind's planning agent and Tidewater's sales agent are real A2A agents too, each with its own Agent Card and
+JSON-RPC endpoint (`/agents/northwind`, `/agents/tidewater` on the arena server, or standalone). Given only Tidewater's
+address, Northwind reads its card, gets a quote, negotiates over A2A with Ed25519-signed offers (each side checks the
+other's key from its card), has Tidewater countersign the contract, registers at Trustee and opens the escrow. Trustee
+pushes "funds held" to Tidewater, which sends the CSV to Northwind as an A2A file part; Northwind verifies the bytes and
+attests. The arena scenario **Three A2A agents** (`a2a`) shows every hop as an `a2a` row on the tape.
+
+```bash
+python examples/a2a_network.py            # Trustee + Northwind + Tidewater on three 127.0.0.1 ports, one purchase
+python examples/a2a_network.py --cheat    # Tidewater ships junk: refunded, nothing captured
+```
+
+Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#the-a2a-network-northwind-and-tidewater-as-agents).
+
 ### SDKs and Postman
 
 - **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route, every `/.well-known` route and the `/a2a` endpoint. Regenerate it with
@@ -260,6 +276,7 @@ src/trustee/
   agents/            trustee, buyer, seller, arbiter
   platform/          public /v1 API, A2A Agent Card, DealService (durable multi-deal host)
   a2a/               A2A JSON-RPC server + client, skills, deal tasks, push notifications
+  network/           Northwind and Tidewater as A2A agents (cards, skills, signed negotiation, delivery)
   client.py          TrusteeClient SDK
   arena/
     runner.py        DealRunner — composes one deal, emits the tape

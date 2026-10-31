@@ -1,4 +1,4 @@
-import { Gavel, Handshake, KeyRound, Loader, Server } from "lucide-react";
+import { Gavel, Handshake, KeyRound, Loader, Network, Server } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Mode, ScenarioInfo } from "./api";
 import { money } from "./describe";
@@ -39,6 +39,13 @@ const META: Record<string, Meta> = {
     outcome: "Settles via API",
     tone: "good",
     who: "External agents over HTTP",
+  },
+  a2a: {
+    icon: <Network size={18} aria-hidden="true" />,
+    blurb: "Northwind and Tidewater are A2A agents that find each other by Agent Card; Trustee holds the money.",
+    outcome: "Settles over A2A",
+    tone: "good",
+    who: "Northwind + Tidewater + Trustee over A2A",
   },
 };
 

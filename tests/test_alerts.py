@@ -126,6 +126,24 @@ def test_arena_approval_timeout_and_cancel_are_alerts_on_the_arena_source():
     sink.close()
 
 
+def test_permanent_authorize_refusal_is_an_approval_failed_alert():
+    hook = Hook()
+    sink, ledger = make_sink(hook)
+    ledger.append("d1", "trustee", "paypal", op="authorize", error="422", status_code=422, request_id="r")
+    ledger.append("d2", "trustee", "paypal", op="authorize", error="503", status_code=503, request_id="r")
+    ledger.append("d3", "trustee", "paypal", op="authorize", error="timeout", status_code=None, request_id="r")
+    got = sent(sink, hook)
+    assert [(a["alert"], a["deal_id"]) for a in got] == [("approval_failed", "d1")]
+    assert "PAYPAL_SELLER_EMAIL" in got[0]["summary"]
+    sink.close()
+
+    hook = Hook()
+    sink, ledger = make_sink(hook, source="arena")
+    ledger.append("a1", "arena", "run", event="approval_failed", note="HTTP 422")
+    assert [a["alert"] for a in sent(sink, hook)] == ["approval_failed"]
+    sink.close()
+
+
 def test_unrelated_events_make_no_alert():
     hook = Hook()
     sink, ledger = make_sink(hook)

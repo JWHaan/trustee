@@ -20,6 +20,10 @@ export function actorName(actor: string): string {
   return ACTOR_PREFIX.find(([prefix]) => actor.startsWith(prefix))?.[1] ?? actor;
 }
 
+function title(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 /** Only an https link is ever rendered as an anchor. */
 export function safeLink(url: string): string | null {
   return /^https:\/\//i.test(url) ? url : null;
@@ -93,6 +97,14 @@ export function describe(row: Row): Line {
     return row.check === "rejected"
       ? { headline: `SIGNATURE REJECTED — ${who}`, detail: note }
       : { headline: `signature verified — ${who}`, detail: note };
+  }
+
+  if (row.kind === "a2a") {
+    // event is "<peer> <method> <skill>"; the actor is the caller. "Northwind → Tidewater · negotiate: counter $168"
+    const [peer = "", method = "", skill = ""] = row.event.split(" ");
+    const subject = method === "SendMessage" || method === "push" ? skill : method;
+    const what = row.note ? `${subject}: ${row.note.toLowerCase().replace(/_/g, " ")}` : subject;
+    return { headline: `${title(actorName(row.actor))} → ${title(peer)} · ${what}${price ? ` ${price}` : ""}`, detail: "", price };
   }
 
   if (row.kind === "api") {

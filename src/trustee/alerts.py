@@ -48,6 +48,7 @@ ALL_KINDS: tuple[str, ...] = (
     "signature_rejected",
     "mandate_recheck",
     "approval_expired",
+    "approval_failed",
     "paypal_call_failed",
 )
 DEFAULT_KINDS = ALL_KINDS
@@ -124,6 +125,20 @@ def classify(ev: Event) -> tuple[str, str, str, str] | None:
             return _mandate_failed("The mandate was no longer valid at capture, so the funds stay held.")
     if kind == "mandate" and p.get("ok") is False and p.get("when"):
         return _mandate_failed(f"The mandate failed its re-check at {p['when']}; no money moved.")
+    # A permanent authorize refusal after the payer approved (e.g. an invalid payee). The arena logs it as a
+    # run event; on the platform it is Trustee's own `paypal` error row with a non-transient 4xx status.
+    refused = kind == "run" and ev.actor == "arena" and p.get("event") == "approval_failed"
+    status = p.get("status_code")
+    if kind == "paypal" and p.get("error") and p.get("op") == "authorize" and isinstance(status, int):
+        refused = 400 <= status < 500 and status not in (408, 429)
+    if refused:
+        return (
+            "approval_failed",
+            "PayPal refused to hold approved funds",
+            "The payer approved, but PayPal refused to authorize the hold; no funds were held. "
+            "Check that PAYPAL_SELLER_EMAIL is a sandbox business account.",
+            "warning",
+        )
     if kind == "run" and ev.actor == "arena" and p.get("event") in ("approval_timeout", "approval_cancelled"):
         why = "was cancelled" if p["event"] == "approval_cancelled" else "timed out"
         return _approval_expired(f"The payer's approval at PayPal {why}; no funds were held.")

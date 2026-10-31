@@ -31,6 +31,7 @@ Reliability rules for the money path:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from dataclasses import asdict, dataclass
@@ -49,6 +50,21 @@ log = logging.getLogger(__name__)
 
 # PayPal authorizations are valid for 29 days (3-day honor period inside that).
 AUTH_VALIDITY = timedelta(days=29)
+
+
+def paypal_issue(exc: PayPalError) -> str:
+    """PayPal's issue code from an error body (e.g. MAX_NUMBER_OF_PAYMENT_ATTEMPTS_EXCEEDED), else its name."""
+    try:
+        body = json.loads(exc.body)
+        details = body.get("details") or []
+        return str((details[0].get("issue") if details else None) or body.get("name") or "")
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return ""
+
+
+def is_transient_paypal(status: int | None) -> bool:
+    """A retry can help: no HTTP status (network), 408, 429 or 5xx. Any other 4xx is PayPal saying no."""
+    return status is None or status in (408, 429) or status >= 500
 
 
 @dataclass
@@ -97,6 +113,9 @@ class Trustee:
         self.dispute_deadline: datetime | None = None
         self._ruling: Ruling | None = None  # arbiter ruling for the open dispute (decided once)
         self._escrow: EscrowOrder | None = None
+        # The last failed PayPal call, read-only for callers deciding whether a retry can help.
+        self.last_paypal_status: int | None = None
+        self.last_paypal_issue: str = ""
         self._last_delivery: Delivery | None = None
         self._capture_block: str | None = None  # last reason a capture was held for mandate reasons
         self.needs_attention: str | None = None  # PayPal says something our state cannot follow; a human looks
@@ -457,6 +476,8 @@ class Trustee:
         return self._escrow is not None and self._escrow.status == "authorized"
 
     def _paypal_failed(self, op: str, rid: str, exc: PayPalError) -> None:
+        self.last_paypal_status = exc.status_code
+        self.last_paypal_issue = paypal_issue(exc)
         self._log(
             "paypal",
             {

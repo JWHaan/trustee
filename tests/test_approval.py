@@ -193,6 +193,30 @@ def test_sweep_polls_at_most_twenty_orders_and_survives_poll_errors():
     assert 0 < len(polls) <= 20 + 2  # 20 reads (+ retry of the failing one), never all 25
 
 
+def test_sweep_closes_a_deal_paypal_permanently_refuses_to_authorize():
+    """An invalid payee: PayPal takes the approval, then refuses the authorize with a 422. The sweep must
+    try once and close the deal (nothing held), not retry every tick until PayPal locks the order."""
+    w, fake = approved_world()
+    fake.order_status = "APPROVED"
+    refusal = httpx.Response(422, json={"name": "UNPROCESSABLE_ENTITY", "details": [{"issue": "PAYEE_ACCOUNT_INVALID"}]})
+    fake.fail["/authorize"] = [refusal] * 5
+    assert ("deal-1", "voided") in w.service.sweep(T0 + timedelta(minutes=1))
+    assert state(w) == "VOIDED"
+    w.service.sweep(T0 + timedelta(minutes=2))
+    assert len(fake.calls("/authorize")) == 1
+    assert len(fake.calls("/capture")) == 0 and len(fake.calls("/void")) == 0
+
+
+def test_sweep_keeps_retrying_a_transient_authorize_failure():
+    w, fake = approved_world()
+    fake.order_status = "APPROVED"
+    fake.fail["/authorize"] = [httpx.Response(503), httpx.Response(503)]  # max_retries=1: one call = 2 attempts
+    acted = w.service.sweep(T0 + timedelta(minutes=1))
+    assert ("deal-1", "error") in acted and state(w) == "CONTRACTED"
+    assert ("deal-1", "escrowed") in w.service.sweep(T0 + timedelta(minutes=2))
+    assert state(w) == "ESCROWED"
+
+
 def test_revoked_mandate_blocks_authorization_after_approval():
     w, fake = approved_world()
     sig = w.keys["org-b"].sign(revoke_signing_bytes("buyer"))

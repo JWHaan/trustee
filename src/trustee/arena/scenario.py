@@ -32,7 +32,8 @@ class Scenario:
     cheat: bool  # ship the corrupt twin
     transcript: str  # stem under fixtures/transcripts/
     attack: str | None = None  # e.g. "forged_signature"; None for an ordinary run
-    flow: str = "negotiated"  # "negotiated" (in-process agents) | "outside" (agents driving /v1 over HTTP)
+    # "negotiated" (in-process agents) | "outside" (agents driving /v1 over HTTP) | "a2a" (agents on A2A servers)
+    flow: str = "negotiated"
     agreed_price: Decimal | None = None  # outside flow: the price agreed off-platform
 
     @property

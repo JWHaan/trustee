@@ -90,6 +90,29 @@
       "transcript": "honest",
       "flow": "outside",
       "agreed_price": "156.00"
+    },
+    {
+      "name": "a2a",
+      "title": "Three A2A agents",
+      "blurb": "Northwind's planning agent and Tidewater's sales agent are real A2A agents, each with its own Agent Card and JSON-RPC endpoint. They find each other by card, negotiate over A2A with signed offers, countersign the contract and open the escrow at Trustee, which holds the money. Tidewater ships when Trustee pushes \"funds held\".",
+      "good": {
+        "good_id": "returns-dataset-2026q3",
+        "description": "Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+          "at least 5000 rows, no blank order_id or refund_usd"
+        ],
+        "deliverable_ref": "returns-2026q3.csv",
+        "sha256": "6662797c62331e3df61cb4f4dd0e0143430fb02968c868d66794147ccea9ade0"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest",
+      "flow": "a2a"
     }
   ]
 }

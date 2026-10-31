@@ -229,3 +229,81 @@ file parts are `{kind: "file", file: {bytes|uri, mimeType, name}}`, and push con
 - **ListTasks without `contextId`** is open when no operator token is configured (the hackathon default, same as principal
   registration).
 - Tested against mocked and in-process PayPal only, like the rest of the sandbox flow.
+
+## The A2A network: Northwind and Tidewater as agents
+
+Trustee is not the only A2A agent in the demo. Northwind Outfitters' planning agent and Tidewater Data Co.'s sales
+agent are A2A agents too, each with its own Agent Card and JSON-RPC endpoint. A purchase runs entirely over A2A:
+Northwind is given Tidewater's address and nothing else.
+
+- **Code:** `src/trustee/network/` (`northwind.py`, `tidewater.py`, `common.py`, `app.py`). The arena scenario is
+  `a2a` ("Three A2A agents", `src/trustee/arena/a2a_flow.py`). A launcher starts all three on local ports:
+  `python examples/a2a_network.py` (add `--cheat` for the junk-twin variant, `--trustee-url` for a remote Trustee).
+- **Mounts.** The arena app serves them at `/agents/northwind` and `/agents/tidewater` (cards at
+  `<mount>/.well-known/agent-card.json` and `agent.json`, JSON-RPC at `<mount>/a2a`). They also run alone:
+  `python -m trustee.network.tidewater --port 8102 --trustee http://127.0.0.1:8000`, and
+  `python -m trustee.network.northwind --port 8101 --trustee ... --buy http://127.0.0.1:8102`.
+- **Server.** Each agent answers `SendMessage` (one DataPart `{"skill", "input"}`, as Trustee's skills) and `GetTask`;
+  a skill that finishes returns a `COMPLETED` task with a `result` artifact, a refused one a `REJECTED` task. Other
+  methods are refused with `UnsupportedOperation`.
+
+### Identity in the card
+
+Each card declares the Ed25519 signed-messages extension (the URI Trustee's card uses) and puts the agent's identity
+in the extension's `params`, the free-form slot A2A gives `AgentExtension`:
+
+```json
+{"capabilities": {"extensions": [{"uri": "https://github.com/trustee/ext/ed25519-signed-messages/v1", "required": true,
+  "params": {"algorithm": "ed25519", "agentId": "tidewater-sales-1a2b3c4d", "principal": "tidewater-data-co-1a2b3c4d",
+             "publicKey": "<urlsafe-base64 raw key>"}}]}}
+```
+
+Keys and ids are generated at startup. The same key is registered at Trustee, so each side can verify the other's
+offers, counters and contracts before Trustee is involved. A peer's key is read from its card on first contact and
+pinned: a later message under the same agent id with another key is refused.
+
+### Skills
+
+| Agent | Skill | Does |
+|---|---|---|
+| Tidewater | `quote` | the good (with its sha256) and the ask |
+| Tidewater | `negotiate` | signed Offer/Counter/Accept in, signed Counter/Accept out (floor-clamped `SellerAgent` policy) |
+| Tidewater | `sign-contract` | checks the buyer's signature and every term against what it accepted, adds its signature, registers at Trustee |
+| Tidewater | `escrow-opened` | confirms the deal at Trustee and registers a push webhook on it |
+| Northwind | `receive-delivery` | stores a delivery (A2A FilePart) from the seller of a deal it signed, after checking the seller's signature and the contract digest |
+
+Tidewater also exposes `POST <mount>/a2a/push`, the webhook Trustee calls. It requires the per-deal token Tidewater
+gave Trustee in `X-A2A-Notification-Token`.
+
+### The purchase
+
+1. Northwind reads Tidewater's card, calls `quote` (the good must equal what it wants and carry a sha256).
+2. `negotiate` for at most 3 rounds, every move signed and every reply checked against the key in the card. The
+   model decides counter or accept; it never sets the price of an acceptance or the good, and the seller's floor is
+   enforced outside the model.
+3. Northwind signs the contract, Tidewater countersigns (`sign-contract`).
+4. Each registers its principal, agent and mandate at Trustee with the `register-*`/`publish-mandate` skills; Northwind
+   calls `open-escrow`. If PayPal needs the payer to approve (`AUTH_REQUIRED`), the approve URL is surfaced and the
+   task is read until it moves on. A permanent PayPal refusal (any 4xx other than 408/429) stops the wait with outcome
+   `approval_failed`; only transient failures are retried.
+5. Northwind calls `escrow-opened`. Tidewater registers its webhook and waits. When Trustee pushes `INPUT_REQUIRED`
+   ("funds held"), Tidewater sends the CSV to Northwind's `receive-delivery` as a FilePart, then calls `record-delivery`
+   with a signed Delivery.
+6. Northwind hashes the received bytes itself, runs the dataset checks, signs an attestation and calls
+   `attest-delivery`. Accept captures to Tidewater; reject goes to the arbiter (a cheating seller is refunded).
+
+### Change in the existing server
+
+`CreateTaskPushNotificationConfig` accepts an optional `sendCurrentState: true` (and `A2AClient.set_push_config(...,
+send_current_state=True)` sends it). The config then receives the task's present state at once. Without it a seller
+that registers after the funds were already held (always the case with dry-run PayPal) would never be told. This is
+an extension; a client that does not send it sees no change.
+
+### Security notes and open risks
+
+- Tidewater fetches the buyer's Agent Card from a URL in the `negotiate` input. Redirects are not followed and the
+  card is size-capped, but the host is caller-chosen and DNS names are not resolved (same caveat as push URLs). Run it
+  where outbound traffic to private ranges is blocked, or put an allow-list in front.
+- First contact is trust-on-first-use of the key in the card. Trustee's registered key is the later check on money.
+- The mounted agents are shared: an `a2a` arena run borrows them (`NetworkAgent.session`) and a second run waits.
+- Delivery sends the whole file in one message (capped at 8 MiB); large goods need a URL part instead.

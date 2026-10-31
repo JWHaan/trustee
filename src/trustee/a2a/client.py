@@ -213,12 +213,18 @@ class A2AClient:
         token: str | None = None,
         authentication: AuthenticationInfo | None = None,
         config_id: str | None = None,
+        send_current_state: bool = False,
     ) -> TaskPushNotificationConfig:
-        """Ask the agent to POST task updates to `url`. `token` is echoed back in `X-A2A-Notification-Token`."""
+        """Ask the agent to POST task updates to `url`. `token` is echoed back in `X-A2A-Notification-Token`.
+        `send_current_state` asks Trustee (a non-standard extension) to push the task's present state to the new
+        webhook right away, for a receiver that registers after the state it waits for was already reached."""
         cfg = TaskPushNotificationConfig(
             taskId=task_id, url=url, token=token, authentication=authentication, id=config_id
         )
-        return TaskPushNotificationConfig.model_validate(self.rpc("CreateTaskPushNotificationConfig", cfg.dump()))
+        params = cfg.dump()
+        if send_current_state:
+            params["sendCurrentState"] = True
+        return TaskPushNotificationConfig.model_validate(self.rpc("CreateTaskPushNotificationConfig", params))
 
     def get_push_config(self, task_id: str, config_id: str) -> TaskPushNotificationConfig:
         result = self.rpc("GetTaskPushNotificationConfig", {"taskId": task_id, "id": config_id})

@@ -389,9 +389,14 @@ class A2AServer:
             raise invalid_params("taskId is required")
         push = self._push_task(cfg.taskId)
         try:
-            return push.create(cfg.taskId, cfg, "v03" if dialect == "v03" else "v1").dump()
+            created = push.create(cfg.taskId, cfg, "v03" if dialect == "v03" else "v1").dump()
         except PushConfigError as exc:
             raise invalid_params(str(exc)) from None
+        if isinstance(params, dict) and params.get("sendCurrentState") is True:
+            # Opt-in extension: a webhook registered after the funds were already held would otherwise
+            # never hear about that state. The notifier skips configs that already received it.
+            push.notify(cfg.taskId)
+        return created
 
     def _push_get(self, params: Any, auth: str | None, dialect: str) -> dict[str, Any]:
         ref = self._parse(PushConfigRef, params)

@@ -43,7 +43,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
     .toLowerCase();
 
   const outcome = snap?.outcome ?? "";
-  const noApproval = outcome === "approval_timeout" || outcome === "approval_cancelled";
+  const noApproval = outcome === "approval_timeout" || outcome === "approval_cancelled" || outcome === "approval_failed";
   const settled = snap?.state === "SETTLED" || has((r) => r.kind === "state" && r.state_to === "SETTLED");
   const voided = snap?.state === "VOIDED" || has((r) => r.kind === "state" && r.state_to === "VOIDED");
   const forged = rejection !== undefined || outcome === "rejected_identity";

@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from ..a2a import A2ABinding
 from ..alerts import AlertSink, arena_alerts_enabled, sink_from_env
 from ..ledger import Ledger
+from ..network import create_northwind, create_tidewater, mount_agents
 from ..paypal import PayPalClient
 from ..platform import DealService, build_router
 from ..platform.service import operator_token_from_env
@@ -306,6 +307,10 @@ def create_app(
             operator_token=operator_token_from_env(),
         )
     approvals = ApprovalRegistry()
+    # The two A2A agents of the `a2a` scenario, with fresh keys. Each has its own Agent Card and /a2a endpoint,
+    # mounted below next to Trustee's; the scenario borrows them (see arena/a2a_flow.py).
+    northwind = create_northwind()
+    tidewater = create_tidewater()
     runner = DealRunner(
         ledger=ledger,
         paypal=paypal,
@@ -315,6 +320,7 @@ def create_app(
         platform_ledger=service.ledger,
         operator_token=service.operator_token,
         approvals=approvals,
+        network=(northwind, tidewater),
     )
     # Human alerts derive from ledger events (money path untouched). Unset URL => no sink, no subscriber.
     alert_sinks: list[AlertSink] = []
@@ -342,6 +348,9 @@ def create_app(
     a2a = A2ABinding(service)
     app.state.a2a = a2a
     app.include_router(a2a.router)
+    app.state.northwind = northwind
+    app.state.tidewater = tidewater
+    mount_agents(app, northwind, tidewater)  # before the UI's catch-all mount at "/"
 
     # ---------------------------------------------------------------- routes
 

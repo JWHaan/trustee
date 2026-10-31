@@ -65,7 +65,7 @@ def test_healthz_and_scenarios():
 
             scenarios = (await client.get("/api/scenarios")).json()
             names = [s["name"] for s in scenarios["scenarios"]]
-            assert names == ["honest", "cheat", "forged", "outside"]
+            assert names == ["honest", "cheat", "forged", "outside", "a2a"]
             assert scenarios["modes"] == ["auto", "live", "scripted"]
 
     asyncio.run(go())

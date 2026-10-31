@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from ..agents.arbiter import Judge
-from ..agents.trustee import Trustee, TrusteeDecision
+from ..agents.trustee import Trustee, TrusteeDecision, is_transient_paypal
 from ..identity import AgentRecord, AgentRegistry, PrincipalRegistry, verify
 from ..ledger import Ledger
 from ..llm import LLM
@@ -618,6 +618,16 @@ class DealService:
                     continue
                 with self._deal_lock(contract.deal_id):
                     decision = trustee.on_approved(contract, now)
+                    if decision.action == "error" and not is_transient_paypal(trustee.last_paypal_status):
+                        # PayPal refused for good (e.g. an invalid payee). Retrying every sweep only
+                        # burns attempts until PayPal locks the order; nothing is held, so close it.
+                        log.warning(
+                            "authorize refused for %s (%s %s); closing the deal",
+                            contract.deal_id,
+                            trustee.last_paypal_status,
+                            trustee.last_paypal_issue,
+                        )
+                        decision = trustee.on_approval_cancelled(contract)
                     self._persist(trustee, contract)
                 acted.append((contract.deal_id, decision.action))
             except Exception:  # noqa: BLE001 - one bad order must not stop the sweep

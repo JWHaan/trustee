@@ -116,7 +116,7 @@ export default function App() {
   }, [scenarios, run]);
 
   const outcome = snap?.outcome ?? null;
-  const unapproved = outcome === "approval_timeout" || outcome === "approval_cancelled";
+  const unapproved = outcome === "approval_timeout" || outcome === "approval_cancelled" || outcome === "approval_failed";
   const verdict =
     outcome === "rejected_identity"
       ? "REJECTED"

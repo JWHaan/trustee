@@ -57,14 +57,16 @@ import httpx
 from ..agents.arbiter import ArbiterAgent
 from ..agents.buyer import ArtifactStore, BuyerAgent
 from ..agents.seller import SellerAgent
-from ..agents.trustee import Trustee, TrusteeDecision
+from ..agents.trustee import Trustee, TrusteeDecision, is_transient_paypal
 from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry
 from ..ledger import Event, Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine
-from ..paypal import EscrowOrder, PayPalClient, PayPalError
+from ..network import Northwind, Tidewater
+from ..paypal import EscrowOrder, PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Accept, Contract, Counter, Offer
 from ..state import Deal, DealState
+from .a2a_flow import A2AFlow
 from .approval import ApprovalGate, ApprovalWait, wait_for_approval
 from .fixtures import load_mandates
 from .outside import OutsideFlow
@@ -144,6 +146,7 @@ class DealRunner:
         operator_token: str | None = None,
         approvals: ApprovalGate | None = None,
         approval_wait: ApprovalWait | None = None,
+        network: tuple[Northwind, Tidewater] | None = None,
     ):
         self.ledger = ledger
         self.paypal = paypal
@@ -161,6 +164,8 @@ class DealRunner:
         self.operator_token = operator_token
         self.approvals = approvals
         self.approval_wait = approval_wait if approval_wait is not None else ApprovalWait.from_env()
+        # Only the `a2a` flow uses this: the mounted Northwind and Tidewater agents (see a2a_flow.py).
+        self.network = network
 
     # ---------------------------------------------------------------- public
 
@@ -243,6 +248,8 @@ class DealRunner:
                 )
                 if scenario.flow == "outside":
                     return self._drive_outside(scenario, deal_id, run_id, requested, effective, fallback_from, store)
+                if scenario.flow == "a2a":
+                    return self._drive_a2a(scenario, deal_id, run_id, requested, effective, fallback_from, store)
                 return self._drive(scenario, deal, run_id, requested, effective, fallback_from, store)
             finally:
                 unsubscribe()
@@ -297,14 +304,15 @@ class DealRunner:
         seller_key = AgentKey.generate() if scenario.attack == "forged_signature" else ident.keys[SELLER_ID]
         contract = contract.sign(BUYER_ID, ident.keys[BUYER_ID]).sign(SELLER_ID, seller_key)
 
+        buyer_email, seller_email = sandbox_emails()
         trustee = Trustee(
             deal=deal,
             mandates=mandates,
             paypal=self.paypal,
             llm=llm,
             ledger=self.ledger,
-            buyer_email="buyer-sandbox@trustee.dev",
-            seller_email="seller-sandbox@trustee.dev",
+            buyer_email=buyer_email,
+            seller_email=seller_email,
             judge=ArbiterAgent(ARBITER_ID, llm=llm, ledger=self.ledger),
             registry=ident.registry,
         )
@@ -323,7 +331,13 @@ class DealRunner:
             )
             result.turns = turns
             result.outcome = outcome
-            clean = ("rejected_mandate", "rejected_identity", "approval_timeout", "approval_cancelled")
+            clean = (
+                "rejected_mandate",
+                "rejected_identity",
+                "approval_timeout",
+                "approval_cancelled",
+                "approval_failed",
+            )
             result.error = None if outcome in clean else decision.action
             return result
 
@@ -371,9 +385,10 @@ class DealRunner:
         )
         cancel = self.approvals.track(order_id) if self.approvals is not None else threading.Event()
         latest = decision
+        refused: str | None = None  # PayPal's reason, once it has said no for good
 
         def attempt() -> bool:
-            nonlocal latest
+            nonlocal latest, refused
             try:
                 status = str(self.paypal.get_order(order_id).get("status"))
             except PayPalError as exc:
@@ -382,13 +397,28 @@ class DealRunner:
             if status != "APPROVED":
                 return False
             latest = trustee.on_approved(contract)
-            return latest.action != "error"  # a PayPal failure leaves state unchanged; the next tick retries
+            if latest.action != "error":
+                return True
+            if is_transient_paypal(trustee.last_paypal_status):
+                return False  # a network or 5xx failure leaves state unchanged; the next tick retries
+            # PayPal refused for good (e.g. an invalid payee locks the order after a few attempts): stop asking.
+            refused = trustee.last_paypal_issue or f"HTTP {trustee.last_paypal_status}"
+            return True
 
         try:
             result = wait_for_approval(attempt, cancel, wait)
         finally:
             if self.approvals is not None:
                 self.approvals.release(order_id)
+        if result == "approved" and refused is not None:
+            self.ledger.append(
+                deal_id,
+                "arena",
+                "run",
+                event="approval_failed",
+                note=f"PayPal refused to authorize the approved order: {refused}. Nothing was held.",
+            )
+            return trustee.on_approval_cancelled(contract), "approval_failed"
         if result == "approved":
             if latest.action == "escrowed":
                 self.ledger.append(deal_id, "arena", "run", event="payer_approved", note="buyer approved in PayPal")
@@ -432,6 +462,60 @@ class DealRunner:
             unforward()
             if self._close_self_client:
                 http.close()
+        return self._http_flow_result(
+            scenario, deal_id, run_id, requested, effective, fallback_from, done, "agents on /v1 over HTTP"
+        )
+
+    def _drive_a2a(
+        self,
+        scenario: Scenario,
+        deal_id: str,
+        run_id: str,
+        requested: str,
+        effective: str,
+        fallback_from: str | None,
+        store: ArtifactStore,
+    ) -> RunResult:
+        if self.self_client is None or self.network is None:
+            raise RuntimeError("the a2a scenario needs a self_client and the mounted network agents")
+        http = self.self_client()
+        unforward = self._forward_platform(deal_id)
+        try:
+            northwind, tidewater = self.network
+            flow = A2AFlow(
+                scenario=scenario,
+                deal_id=deal_id,
+                ledger=self.ledger,
+                paypal=self.paypal,
+                http=http,
+                operator_token=self.operator_token or os.environ.get("TRUSTEE_OPERATOR_TOKEN") or None,
+                store=store,
+                checkers=self.checkers,
+                llm=self._build_llm(scenario, effective),
+                wait=self.approval_wait,
+                northwind=northwind,
+                tidewater=tidewater,
+            )
+            done = flow.run()
+        finally:
+            unforward()
+            if self._close_self_client:
+                http.close()
+        return self._http_flow_result(
+            scenario, deal_id, run_id, requested, effective, fallback_from, done, "A2A agents over HTTP"
+        )
+
+    def _http_flow_result(
+        self,
+        scenario: Scenario,
+        deal_id: str,
+        run_id: str,
+        requested: str,
+        effective: str,
+        fallback_from: str | None,
+        done: Any,
+        label: str,
+    ) -> RunResult:
         view = done.view
         result = RunResult(
             run_id=run_id,
@@ -440,7 +524,7 @@ class DealRunner:
             mode=requested,
             effective_mode=effective,
             state=view["state"],
-            price=str(scenario.agreed_price or scenario.ask),
+            price=_agreed_price(scenario, view),
             turns=done.turns,
             contract=view["contract"],
             escrow=view["escrow"],
@@ -459,7 +543,7 @@ class DealRunner:
                 event="run_finished",
                 state=result.state,
                 price=result.price,
-                note=f"{effective} run, agents on /v1 over HTTP",
+                note=f"{effective} run, {label}",
             )
         return result
 
@@ -560,8 +644,8 @@ class DealRunner:
         keys = {agent_id: AgentKey.generate() for agent_id in (BUYER_ID, SELLER_ID, ARBITER_ID)}
         registry = AgentRegistry()
         for agent_id, role, email in (
-            (BUYER_ID, "buyer", "buyer-sandbox@trustee.dev"),
-            (SELLER_ID, "seller", "seller-sandbox@trustee.dev"),
+            (BUYER_ID, "buyer", sandbox_emails()[0]),
+            (SELLER_ID, "seller", sandbox_emails()[1]),
             (ARBITER_ID, "arbiter", None),
         ):
             registry.register(
@@ -671,6 +755,16 @@ def _only(deal_id: str, handler: Handler | None) -> Handler:
             handler(ev)
 
     return emit
+
+
+def _agreed_price(scenario: Scenario, view: dict[str, Any]) -> str:
+    """Outside agents agreed their price off-platform (it is in the scenario); A2A agents negotiated it, so it is
+    read back from the contract Trustee holds."""
+    if scenario.flow == "a2a":
+        quoted = str((view.get("contract") or {}).get("price") or "")
+        if quoted:
+            return quoted.split(" ")[0]
+    return str(scenario.agreed_price or scenario.ask)
 
 
 def _short() -> str:
