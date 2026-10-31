@@ -1,0 +1,12 @@
+.git
+.venv
+.tmp
+.mypy_cache
+.ruff_cache
+.pytest_cache
+**/__pycache__
+**/*.pyc
+arena/ui/node_modules
+arena/ui/dist
+runs.jsonl
+.env

@@ -1,0 +1,22 @@
+{
+  "mandates": [
+    {
+      "agent_id": "buyer-agent-1",
+      "principal": "demo-principal (human)",
+      "grants": "spend",
+      "max_amount": "500.00",
+      "allowed_categories": ["code", "data", "design", "api-access"],
+      "allowed_counterparties": ["seller-agent-1"],
+      "notes": "Autonomous spend up to 500 USD on digital goods, only with this seller."
+    },
+    {
+      "agent_id": "seller-agent-1",
+      "principal": "demo-principal (human)",
+      "grants": "receive",
+      "max_amount": "500.00",
+      "allowed_categories": ["code", "data", "design", "api-access"],
+      "allowed_counterparties": ["buyer-agent-1"],
+      "notes": "May receive settlement from this buyer only."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "_note": "Recorded LLM moves only. The buyer caves here on purpose: it pays 170 for a 180 ask, and the trust layer is what stops that from being a loss.",
+  "scenario": "cheat",
+  "moves": [
+    { "speaker": "buyer", "kind": "offer", "price": "144.00", "note": "opens 20% under the 180 ask" },
+    { "speaker": "seller", "kind": "counter", "price": "170.00", "note": "barely moves — it knows the goods are junk" },
+    { "speaker": "buyer", "kind": "accept", "price": "170.00", "note": "caves, still inside budget" }
+  ]
+}

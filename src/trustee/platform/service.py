@@ -1,0 +1,620 @@
+"""DealService — Trustee as a long-running service rather than a single in-process deal.
+
+The Trustee agent owns one deal's money path. This class owns *many* of them: it keeps the
+identity registries, the mandate engine and the deadline sweeper, persists every deal after
+every call, and rebuilds all of it from the store on start. That last part is the point: if the
+process dies while PayPal holds a buyer's funds, the next process finds the deal in the store,
+re-reserves its budget and keeps sweeping it, so the hold is eventually captured or voided.
+
+Everything here is blocking (PayPal HTTP, SQLite). The HTTP layer calls it via `asyncio.to_thread`.
+Errors the API must surface are `ServiceError(status, detail, **extra)`; anything else is a bug.
+"""
+
+from __future__ import annotations
+
+import hmac
+import logging
+import os
+import re
+import threading
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from typing import Any
+
+from ..agents.arbiter import Judge
+from ..agents.trustee import Trustee, TrusteeDecision
+from ..identity import AgentRecord, AgentRegistry, PrincipalRegistry, verify
+from ..ledger import Ledger
+from ..llm import LLM
+from ..mandate import Mandate, MandateEngine, MandateReplay
+from ..paypal import PayPalClient
+from ..protocol import Attest, Contract, Delivery
+from ..state import Deal, DealState, IllegalTransition
+from ..store import Store, StoreConflict
+from ..sweeper import DeadlineSweeper
+from .wire import (
+    ID_PATTERN,
+    agent_signing_bytes,
+    mandate_from_dict,
+    mandate_to_dict,
+    principal_signing_bytes,
+    revoke_signing_bytes,
+)
+
+log = logging.getLogger(__name__)
+
+MAX_APPROVAL_POLLS = 20  # PayPal reads per sweep; a long backlog is worked off across sweeps
+
+_ID = re.compile(ID_PATTERN)
+
+
+class ServiceError(Exception):
+    """An error with an HTTP meaning. `extra` is merged into the response body."""
+
+    def __init__(self, status: int, detail: str, **extra: Any):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+        self.extra = extra
+
+
+class DealService:
+    def __init__(
+        self,
+        store: Store,
+        paypal: PayPalClient,
+        ledger: Ledger,
+        llm: LLM | None = None,
+        judge_factory: Callable[[], Judge] | None = None,
+        sweeper: DeadlineSweeper | None = None,
+        operator_token: str | None = None,
+    ):
+        self.store = store
+        self.paypal = paypal
+        self.ledger = ledger
+        self.llm = llm
+        self.judge_factory = judge_factory
+        self.sweeper = sweeper if sweeper is not None else DeadlineSweeper()
+        self.operator_token = operator_token or None
+        self.registry = AgentRegistry()
+        self.principals = PrincipalRegistry()
+        self.mandates = MandateEngine(principals=self.principals)
+        self._deals: dict[str, tuple[Trustee, Contract]] = {}
+        self._lock = threading.RLock()
+        self._deal_locks: dict[str, threading.RLock] = {}
+        self._by_order: dict[str, str] = {}  # PayPal order id -> deal id (webhooks and return URLs)
+        self._by_authz: dict[str, str] = {}  # PayPal authorization id -> deal id
+        self._poll_cursor = 0
+        self._revoked: set[str] = set()  # sticky: a revoked agent id never gets a mandate again
+        store.attach(ledger)  # the tape is durable
+        self.rehydrate()
+
+    # ------------------------------------------------------------- lifecycle
+
+    def rehydrate(self) -> None:
+        """Rebuild registries, mandates, budgets and open deals from the store."""
+        for row in self.store.list_agents():
+            self._ensure_principal(row["principal"])
+            self.registry.register(
+                AgentRecord(
+                    agent_id=row["agent_id"],
+                    public_key=row["public_key"],
+                    principal=row["principal"],
+                    roles=frozenset(row["roles"]),
+                    paypal_email=row["paypal_email"],
+                    metadata=row["metadata"] or {},
+                )
+            )
+            stored = self.store.get_mandate(row["agent_id"])
+            if stored is None:
+                continue
+            self._ensure_principal(stored["principal"])
+            self.mandates.grant(mandate_from_dict(stored["body"]))
+            if stored["revoked"]:
+                self.mandates.revoke(row["agent_id"])
+                self._revoked.add(row["agent_id"])
+        # Captured deals are spend: without this a restart would hand every budget back.
+        for row in self.store.list_deals(states=[DealState.SETTLED.value], limit=1_000_000):
+            if row["contract"] is not None:
+                self.mandates.commit(Contract.model_validate(row["contract"]))
+        for row in self.store.open_deals():
+            self._load_row(row)
+
+    def _load_row(self, row: dict[str, Any]) -> tuple[Trustee, Contract] | None:
+        if row["contract"] is None:
+            return None
+        contract = Contract.model_validate(row["contract"])
+        trustee = self._new_trustee(contract.deal_id, row["snapshot"])
+        entry = (trustee, contract)
+        with self._lock:
+            self._deals[contract.deal_id] = entry
+        self._index(trustee, contract)
+        if not trustee.deal.is_terminal:
+            if (row["snapshot"].get("escrow") or {}).get("status") == "authorized":
+                self.mandates.reserve(contract)
+            self.sweeper.register(trustee, contract)
+        return entry
+
+    def _new_trustee(self, deal_id: str, snapshot: dict[str, Any] | None = None) -> Trustee:
+        judge = self.judge_factory() if self.judge_factory is not None else None
+        recorder = self._state_recorder(deal_id)
+        if snapshot is not None:
+            return Trustee.from_snapshot(
+                snapshot,
+                mandates=self.mandates,
+                paypal=self.paypal,
+                llm=self.llm,
+                ledger=self.ledger,
+                judge=judge,
+                registry=self.registry,
+                on_transition=recorder,
+            )
+        return Trustee(
+            Deal(deal_id, on_transition=recorder),
+            self.mandates,
+            self.paypal,
+            llm=self.llm,
+            ledger=self.ledger,
+            judge=judge,
+            registry=self.registry,
+        )
+
+    def _state_recorder(self, deal_id: str) -> Callable[[str, str, str], None]:
+        def record(reason: str, frm: str, to: str) -> None:
+            self.ledger.append(
+                deal_id, "trustee", "state", event="transition", state_from=frm, state_to=to, note=reason
+            )
+
+        return record
+
+    # ------------------------------------------------------------------ auth
+
+    def check_registration_token(self, authorization: str | None) -> None:
+        """Open registration unless an operator token is configured (dev/hackathon default)."""
+        if self.operator_token is None:
+            return
+        if not self._bearer_matches(authorization):
+            raise ServiceError(401, "registration requires the operator bearer token")
+
+    def require_operator(self, authorization: str | None) -> None:
+        if self.operator_token is None:
+            raise ServiceError(403, "operator endpoints are disabled: no TRUSTEE_OPERATOR_TOKEN is configured")
+        if not self._bearer_matches(authorization):
+            raise ServiceError(401, "operator bearer token required")
+
+    def _bearer_matches(self, authorization: str | None) -> bool:
+        if not authorization or not self.operator_token:
+            return False
+        scheme, _, token = authorization.partition(" ")
+        return scheme.lower() == "bearer" and hmac.compare_digest(token.strip(), self.operator_token)
+
+    # ------------------------------------------------------------- identities
+
+    def _ensure_principal(self, principal: str) -> str | None:
+        """Principal key from memory, falling back to (and caching from) the store."""
+        key = self.principals.get(principal)
+        if key is None:
+            row = self.store.get_principal(principal)
+            if row is not None:
+                key = str(row["public_key"])
+                self.principals.register(principal, key)
+        return key
+
+    def register_principal(self, principal: str, public_key: str, proof: str) -> tuple[dict[str, Any], bool]:
+        if not verify(public_key, proof, principal_signing_bytes(principal, public_key)):
+            raise ServiceError(401, "invalid proof of possession for principal key")
+        with self._lock:
+            existing = self._ensure_principal(principal)
+            if existing is not None and existing != public_key:
+                raise ServiceError(409, f"principal {principal!r} is already registered with a different key")
+            if existing is not None:
+                return {"principal": principal, "public_key": public_key}, False
+            try:
+                self.store.put_principal(principal, public_key)
+            except StoreConflict as exc:
+                raise ServiceError(409, str(exc)) from None
+            self.principals.register(principal, public_key)
+        return {"principal": principal, "public_key": public_key}, True
+
+    def register_agent(
+        self,
+        agent_id: str,
+        public_key: str,
+        principal: str,
+        roles: list[str],
+        paypal_email: str | None,
+        proof: str,
+        principal_signature: str,
+    ) -> tuple[dict[str, Any], bool]:
+        body = agent_signing_bytes(agent_id, public_key, principal, roles, paypal_email)
+        if not verify(public_key, proof, body):
+            raise ServiceError(401, "invalid proof of possession for agent key")
+        with self._lock:
+            if self._ensure_principal(principal) is None:
+                raise ServiceError(422, f"unknown principal {principal!r}: register it first")
+            if not self.principals.verify(principal, principal_signature, body):
+                raise ServiceError(401, f"principal {principal!r} did not vouch for this agent")
+            existing = self.registry.get(agent_id)
+            if existing is not None and existing.public_key != public_key:
+                raise ServiceError(409, f"agent {agent_id!r} is already registered with a different key")
+            if existing is not None and existing.principal != principal:
+                raise ServiceError(409, f"agent {agent_id!r} belongs to a different principal")
+            record = AgentRecord(
+                agent_id=agent_id,
+                public_key=public_key,
+                principal=principal,
+                roles=frozenset(roles),
+                paypal_email=paypal_email,
+            )
+            try:
+                self.store.put_agent(agent_id, public_key, principal, sorted(record.roles), paypal_email)
+            except StoreConflict as exc:
+                raise ServiceError(409, str(exc)) from None
+            self.registry.register(record)
+        return self._public_agent(record), existing is None
+
+    def get_agent(self, agent_id: str) -> dict[str, Any]:
+        record = self.registry.get(agent_id)
+        if record is None:
+            raise ServiceError(404, f"unknown agent {agent_id!r}")
+        return self._public_agent(record)
+
+    @staticmethod
+    def _public_agent(record: AgentRecord) -> dict[str, Any]:
+        # No secrets live here, but the payout address is the owner's business: expose only that one is set.
+        return {
+            "agent_id": record.agent_id,
+            "public_key": record.public_key,
+            "principal": record.principal,
+            "roles": sorted(record.roles),
+            "has_paypal_email": bool(record.paypal_email),
+        }
+
+    # --------------------------------------------------------------- mandates
+
+    def publish_mandate(self, mandate: Mandate) -> dict[str, Any]:
+        record = self.registry.get(mandate.agent_id)
+        if record is None:
+            raise ServiceError(404, f"unknown agent {mandate.agent_id!r}")
+        if record.principal != mandate.principal:
+            raise ServiceError(403, f"agent {mandate.agent_id!r} belongs to principal {record.principal!r}")
+        if self._ensure_principal(mandate.principal) is None or not self.principals.verify(
+            mandate.principal, mandate.principal_signature, mandate.signing_bytes()
+        ):
+            raise ServiceError(401, f"mandate is not signed by principal {mandate.principal!r}")
+        with self._lock:
+            if mandate.agent_id in self._revoked:
+                raise ServiceError(409, f"mandate for {mandate.agent_id!r} was revoked; register a new agent id")
+            try:
+                self.mandates.check_grant(mandate)
+            except MandateReplay as exc:
+                raise ServiceError(409, str(exc)) from None
+            self.store.put_mandate(mandate.agent_id, mandate.principal, mandate_to_dict(mandate))
+            self.mandates.grant(mandate)
+        return {"agent_id": mandate.agent_id, "principal": mandate.principal, "grants": mandate.grants}
+
+    def revoke_mandate(self, agent_id: str, signature: str) -> dict[str, Any]:
+        record = self.registry.get(agent_id)
+        if record is None:
+            raise ServiceError(404, f"unknown agent {agent_id!r}")
+        if self._ensure_principal(record.principal) is None or not self.principals.verify(
+            record.principal, signature, revoke_signing_bytes(agent_id)
+        ):
+            raise ServiceError(401, f"revocation is not signed by principal {record.principal!r}")
+        with self._lock:
+            if not self.store.revoke_mandate(agent_id):
+                raise ServiceError(404, f"no mandate on file for {agent_id!r}")
+            self.mandates.revoke(agent_id)
+            self._revoked.add(agent_id)
+        return {"agent_id": agent_id, "revoked": True}
+
+    # ------------------------------------------------------------------ deals
+
+    def _deal_lock(self, deal_id: str) -> threading.RLock:
+        with self._lock:
+            return self._deal_locks.setdefault(deal_id, threading.RLock())
+
+    def _entry(self, deal_id: str) -> tuple[Trustee, Contract] | None:
+        with self._lock:
+            entry = self._deals.get(deal_id)
+        if entry is not None:
+            return entry
+        row = self.store.get_deal(deal_id)  # e.g. a terminal deal from before the last restart
+        return self._load_row(row) if row is not None else None
+
+    def _require(self, deal_id: str) -> tuple[Trustee, Contract]:
+        entry = self._entry(deal_id)
+        if entry is None:
+            raise ServiceError(404, f"unknown deal {deal_id!r}")
+        return entry
+
+    def _persist(self, trustee: Trustee, contract: Contract) -> None:
+        """Write the deal's state. Runs under the deal lock so snapshots land in order.
+        A storage failure is logged, not raised: the money has already moved, and failing the
+        request would not undo it."""
+        with self._deal_lock(contract.deal_id):
+            try:
+                snap = trustee.snapshot()
+                self._index(trustee, contract, snap)
+                self.store.upsert_deal(contract.deal_id, snap["state"], contract.model_dump(mode="json"), snap)
+            except Exception:  # noqa: BLE001
+                log.exception("CRITICAL: could not persist deal %s; a restart may lose it", contract.deal_id)
+
+    def _index(self, trustee: Trustee, contract: Contract, snap: dict[str, Any] | None = None) -> None:
+        escrow = (snap or trustee.snapshot())["escrow"]
+        if escrow is None:
+            return
+        with self._lock:
+            if escrow["order_id"]:
+                self._by_order[escrow["order_id"]] = contract.deal_id
+            if escrow["authorization_id"]:
+                self._by_authz[escrow["authorization_id"]] = contract.deal_id
+
+    def _find(
+        self, *, order_id: str | None = None, authorization_id: str | None = None
+    ) -> tuple[Trustee, Contract] | None:
+        """Deal for a PayPal id. The index covers open deals; a miss scans the store for older (terminal) ones."""
+        for index, key in ((self._by_authz, authorization_id), (self._by_order, order_id)):
+            if key:
+                with self._lock:
+                    deal_id = index.get(key)
+                if deal_id is not None:
+                    return self._entry(deal_id)
+        wanted = {k for k in (order_id, authorization_id) if k}
+        if not wanted:
+            return None
+        for row in self.store.list_deals(limit=100_000):
+            esc = (row["snapshot"] or {}).get("escrow") or {}
+            if wanted & {esc.get("order_id"), esc.get("authorization_id")}:
+                return self._entry(row["deal_id"])
+        return None
+
+    def view(self, deal_id: str) -> dict[str, Any]:
+        trustee, contract = self._require(deal_id)
+        return self._view(trustee, contract)
+
+    @staticmethod
+    def _view(trustee: Trustee, contract: Contract) -> dict[str, Any]:
+        snap = trustee.snapshot()
+        escrow = snap["escrow"]
+        ruling = snap["ruling"]
+        return {
+            "deal_id": contract.deal_id,
+            "state": snap["state"],
+            "contract": contract.key_clauses(),
+            "escrow": None
+            if escrow is None
+            else {
+                "order_id": escrow["order_id"],
+                "authorization_id": escrow["authorization_id"],
+                "status": escrow["status"],
+                "approve_url": escrow["approve_url"],
+            },
+            "ruling": None
+            if ruling is None
+            else {
+                "decision": ruling["decision"],
+                "clause": ruling["clause"],
+                "reasoning": ruling["reasoning"],
+                "objective": ruling["objective"],
+                "llm_assisted": ruling["llm_assisted"],
+            },
+            "dispute_deadline": snap["dispute_deadline"],
+            "needs_attention": snap.get("needs_attention"),
+            "history": snap["history"],
+        }
+
+    def events(self, deal_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
+        self._require(deal_id)
+        rows = self.store.events(deal_id, after_seq=max(0, after_seq), limit=max(1, min(limit, 1000)))
+        return {"deal_id": deal_id, "events": rows, "next_after_seq": rows[-1]["seq"] if rows else after_seq}
+
+    def _raise_for(self, decision: TrusteeDecision, trustee: Trustee, contract: Contract, subject: str) -> None:
+        if decision.action == "rejected_identity":
+            raise ServiceError(401, decision.explanation or "identity check failed")
+        if decision.action == "rejected_mandate":
+            violations = decision.report.violations if decision.report is not None else [decision.explanation]
+            raise ServiceError(403, "mandate check failed", violations=violations)
+        if decision.action == "error":
+            if subject == "delivery":
+                raise ServiceError(422, "delivery does not match the contract (deliverable_ref)")
+            # PayPal failed. Funds are exactly where the view says; retrying the same call is safe.
+            raise ServiceError(502, decision.explanation or "PayPal call failed", deal=self._view(trustee, contract))
+
+    def open_deal(self, contract: Contract) -> tuple[dict[str, Any], bool]:
+        """Form a deal from a doubly signed contract. Returns (view, created)."""
+        if not _ID.fullmatch(contract.deal_id):
+            raise ServiceError(422, "deal_id must match " + ID_PATTERN)
+        with self._deal_lock(contract.deal_id):
+            entry = self._entry(contract.deal_id)
+            created = entry is None
+            if entry is not None:
+                trustee, stored = entry
+                if stored.digest() != contract.digest():
+                    raise ServiceError(409, f"deal {contract.deal_id!r} already exists with different terms")
+                retry = trustee.deal.state == DealState.CONTRACTED and trustee.snapshot()["escrow"] is None
+                if not retry:
+                    return self._view(trustee, stored), False
+                contract = stored  # authorize failed earlier; the PayPal request id is deterministic, so retry is safe
+            else:
+                trustee = self._new_trustee(contract.deal_id)
+                trustee.deal.transition(DealState.NEGOTIATING, "signed contract submitted")
+            decision = trustee.on_contract(contract)
+            if decision.action in ("rejected_identity", "rejected_mandate"):
+                # Never stored: a refused contract must not squat on the deal id or touch PayPal.
+                self._raise_for(decision, trustee, contract, "contract")
+            with self._lock:
+                self._deals[contract.deal_id] = (trustee, contract)
+            self._persist(trustee, contract)
+            self.sweeper.register(trustee, contract)
+            self._raise_for(decision, trustee, contract, "contract")
+            return self._view(trustee, contract), created
+
+    def on_delivery(self, deal_id: str, delivery: Delivery) -> dict[str, Any]:
+        trustee, contract = self._require(deal_id)
+        with self._deal_lock(deal_id):
+            try:
+                decision = trustee.on_delivery(delivery, contract)
+            except IllegalTransition as exc:
+                raise ServiceError(409, str(exc)) from None
+            self._persist(trustee, contract)
+            self._raise_for(decision, trustee, contract, "delivery")
+            return self._view(trustee, contract)
+
+    def on_attest(self, deal_id: str, attest: Attest) -> dict[str, Any]:
+        trustee, contract = self._require(deal_id)
+        with self._deal_lock(deal_id):
+            # Capturing before delivery would move money and then fail the state transition.
+            if trustee.deal.state not in (DealState.DELIVERED, DealState.DISPUTED) and not trustee.deal.is_terminal:
+                raise ServiceError(
+                    409, f"cannot attest a deal in state {trustee.deal.state.value}; delivery comes first"
+                )
+            try:
+                decision = trustee.on_attest(attest, contract)
+            except IllegalTransition as exc:
+                raise ServiceError(409, str(exc)) from None
+            self._persist(trustee, contract)
+            self._raise_for(decision, trustee, contract, "attest")
+            return self._view(trustee, contract)
+
+    def resolve(
+        self, deal_id: str, decision: str, operator: str, reason: str, authorization: str | None
+    ) -> dict[str, Any]:
+        self.require_operator(authorization)
+        trustee, contract = self._require(deal_id)
+        with self._deal_lock(deal_id):
+            try:
+                result = trustee.resolve_dispute(contract, decision, operator, reason)  # type: ignore[arg-type]
+            except IllegalTransition as exc:
+                raise ServiceError(409, str(exc)) from None
+            except ValueError as exc:
+                raise ServiceError(422, str(exc)) from None
+            self._persist(trustee, contract)
+            self._raise_for(result, trustee, contract, "resolve")
+            return self._view(trustee, contract)
+
+    # ------------------------------------------------------- payer approval
+
+    def approval_return(self, order_id: str) -> dict[str, Any]:
+        """The payer came back from PayPal approved: hold the funds. Replays are no-ops."""
+        return self._approval(order_id, cancelled=False)
+
+    def approval_cancel(self, order_id: str) -> dict[str, Any]:
+        return self._approval(order_id, cancelled=True)
+
+    def _approval(self, order_id: str, *, cancelled: bool) -> dict[str, Any]:
+        entry = self._find(order_id=order_id)
+        if entry is None:
+            raise ServiceError(404, f"unknown PayPal order {order_id!r}")
+        trustee, contract = entry
+        with self._deal_lock(contract.deal_id):
+            decision = trustee.on_approval_cancelled(contract) if cancelled else trustee.on_approved(contract)
+            self._persist(trustee, contract)
+            return {
+                "decision": decision.action,
+                "explanation": decision.explanation,
+                "deal": self._view(trustee, contract),
+            }
+
+    # ---------------------------------------------------------------- webhooks
+
+    def handle_webhook(self, headers: Mapping[str, str], body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """PayPal's events are ground truth for money movement. Returns (http status, body).
+
+        Unverified -> 400 and nothing recorded. Verified events always answer 200 so PayPal stops
+        retrying; an unexpected crash while handling is the one exception (500, and the delivery is
+        un-recorded so the retry is processed rather than deduped)."""
+        if not self.paypal.verify_webhook(headers, body):
+            return 400, {"detail": "webhook signature verification failed"}
+        event_id = str(body.get("id") or "")
+        event_type = str(body.get("event_type") or "")
+        raw_resource = body.get("resource")
+        resource: dict[str, Any] = raw_resource if isinstance(raw_resource, dict) else {}
+        if not event_id or not event_type:
+            return 400, {"detail": "webhook event needs an id and an event_type"}
+        if not self.store.record_webhook(event_id, event_type, resource.get("id"), body):
+            return 200, {"duplicate": True}
+        try:
+            status, result = self._apply_webhook(event_type, resource)
+        except Exception:  # noqa: BLE001
+            log.exception("webhook %s (%s) crashed", event_id, event_type)
+            self.store.forget_webhook(event_id)
+            return 500, {"detail": "webhook handling failed; retry"}
+        if "ignored" in result:
+            self.store.forget_webhook(event_id)  # nothing happened, so a later redelivery may succeed
+        return status, result
+
+    def _apply_webhook(self, event_type: str, resource: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        rid = str(resource.get("id") or "")
+        related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+        if event_type == "CHECKOUT.ORDER.APPROVED":
+            entry = self._find(order_id=rid)
+        elif event_type == "PAYMENT.AUTHORIZATION.VOIDED":
+            entry = self._find(authorization_id=rid)
+        elif event_type in _CAPTURE_EVENTS:
+            entry = self._find(authorization_id=related.get("authorization_id"), order_id=related.get("order_id"))
+        else:
+            return 200, {"ignored": event_type}
+        if entry is None:
+            return 200, {"ignored": "unknown resource"}
+        trustee, contract = entry
+        with self._deal_lock(contract.deal_id):
+            if event_type == "CHECKOUT.ORDER.APPROVED":
+                decision = trustee.on_approved(contract)
+            elif event_type == "PAYMENT.AUTHORIZATION.VOIDED":
+                decision = trustee.on_external_void(contract, "webhook " + event_type)
+            elif event_type == "PAYMENT.CAPTURE.COMPLETED":
+                decision = trustee.on_external_capture(contract, rid, "webhook " + event_type)
+            else:
+                decision = trustee.on_paypal_alert(
+                    contract, event_type, f"PayPal reported {event_type} for capture {rid}"
+                )
+            self._persist(trustee, contract)
+        return 200, {"handled": decision.action, "deal_id": contract.deal_id, "state": trustee.deal.state.value}
+
+    # ------------------------------------------------------------------ sweep
+
+    def sweep(self, now: datetime | None = None) -> list[tuple[str, str]]:
+        """Run the deadline sweeper once, then poll PayPal for payer approvals; persist what acted."""
+        results = self.sweeper.tick(now)
+        acted: list[tuple[str, str]] = []
+        for deal_id, decision in results:
+            entry = self._entry(deal_id)
+            if entry is not None:
+                self._persist(*entry)
+            acted.append((deal_id, decision.action))
+        acted.extend(self._poll_approvals(now))
+        return acted
+
+    def _poll_approvals(self, now: datetime | None) -> list[tuple[str, str]]:
+        """Local dev gets no webhooks: ask PayPal whether awaiting orders were approved.
+        At most MAX_APPROVAL_POLLS reads per sweep, rotating so a backlog cannot starve newer deals."""
+        with self._lock:
+            waiting = [(t, c) for t, c in self._deals.values() if t.awaiting_approval]
+        if not waiting:
+            return []
+        start = self._poll_cursor % len(waiting)
+        batch = (waiting[start:] + waiting[:start])[:MAX_APPROVAL_POLLS]
+        self._poll_cursor += len(batch)
+        acted: list[tuple[str, str]] = []
+        for trustee, contract in batch:
+            try:
+                order_id = trustee.snapshot()["escrow"]["order_id"]
+                if str(self.paypal.get_order(order_id).get("status")) != "APPROVED":
+                    continue
+                with self._deal_lock(contract.deal_id):
+                    decision = trustee.on_approved(contract, now)
+                    self._persist(trustee, contract)
+                acted.append((contract.deal_id, decision.action))
+            except Exception:  # noqa: BLE001 - one bad order must not stop the sweep
+                log.exception("approval poll failed for %s", contract.deal_id)
+        return acted
+
+
+_CAPTURE_EVENTS = frozenset(
+    {"PAYMENT.CAPTURE.COMPLETED", "PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.REVERSED", "PAYMENT.CAPTURE.REFUNDED"}
+)
+
+
+def operator_token_from_env() -> str | None:
+    return os.environ.get("TRUSTEE_OPERATOR_TOKEN") or None

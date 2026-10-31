@@ -8,3 +8,9 @@ __pycache__/
 *.jsonl
 .DS_Store
 dist/
+
+# arena
+arena/ui/node_modules/
+arena/ui/dist/
+.tmp/
+runs.jsonl

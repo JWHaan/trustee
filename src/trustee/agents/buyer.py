@@ -1,7 +1,8 @@
 """Buyer agent — negotiate, then verify delivery and attest.
 
 The buyer's attestation is the evidence the Trustee needs to capture or void:
-machine-checkable (hash vs. manifest, registered checkers) with the LLM only
+machine-checkable (hash of the received bytes vs. the contract hash, registered
+checkers) with the LLM only
 summarizing. A `cheat` fixture ships a corrupt deliverable so the reject path
 is demonstrable end-to-end.
 """
@@ -29,21 +30,44 @@ Checker = Callable[[Path, str], tuple[bool, str]]  # (artifact, good_id) -> (ok,
 
 @dataclass
 class ArtifactStore:
-    """Demo deliverables: a goods dir + a manifest of expected sha256 values."""
+    """The seller's inventory and the buyer's inbox.
+
+    `goods_dir` is where artifacts live *before* delivery; `inbox` is where a
+    delivery lands. They are deliberately separate: if both sides shared one
+    directory, a cheating seller would either have to corrupt the fixture it
+    was supposed to ship, or the buyer's checker would end up inspecting the
+    honest file and reporting "pass" on a junk delivery. Two directories make
+    the transfer real, so criterion 2 reads the bytes that were actually sent.
+    """
 
     goods_dir: Path
     manifest: dict[str, str] = field(default_factory=dict)
+    inbox: Path | None = None
 
     @classmethod
-    def load(cls, root: Path) -> ArtifactStore:
+    def load(cls, root: Path, inbox: Path | None = None) -> ArtifactStore:
         manifest = json.loads((root / "manifest.json").read_text())
-        return cls(goods_dir=root / "goods", manifest=manifest)
+        return cls(goods_dir=root / "goods", manifest=manifest, inbox=inbox)
+
+    @property
+    def inbox_dir(self) -> Path:
+        return self.inbox if self.inbox is not None else self.goods_dir
 
     def hash_artifact(self, ref: str) -> str:
         p = self.goods_dir / ref
         if not p.exists():
             return ""
         return hashlib.sha256(p.read_bytes()).hexdigest()
+
+    def receive(self, ref: str, payload: bytes) -> str:
+        """Land delivered bytes in the inbox; return their hash."""
+        dest = self.inbox_dir / ref
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(payload)
+        return hashlib.sha256(payload).hexdigest()
+
+    def received(self, ref: str) -> Path:
+        return self.inbox_dir / ref
 
 
 class BuyerAgent(Negotiator):
@@ -72,26 +96,63 @@ class BuyerAgent(Negotiator):
     # ---------------------------------------------------------- delivery side
 
     def verify_delivery(self, contract: Contract, delivery: Delivery) -> Attest:
-        """Machine-check the delivery against the contract, then attest."""
+        """Machine-check the delivery against the contract, then attest.
+
+        The buyer hashes the bytes it received itself. A seller-reported hash
+        is only a claim: the seller controls it, and it could describe a file
+        other than the one that arrived. The expected hash comes from the
+        contract when it names one, so both parties fixed it before delivery.
+        The manifest is a legacy fallback for goods formed without a hash.
+        """
         evidence: dict[str, str] = {}
         failures: list[str] = []
+        ref = contract.good.deliverable_ref
+        reported = delivery.content_hash
+        evidence["sha256_reported"] = reported
 
-        # 1. hash must match the manifest (the "sha256 in manifest" clause)
-        if delivery.deliverable_ref in self.store.manifest:
-            expected = self.store.manifest[delivery.deliverable_ref]
-            ok = delivery.content_hash == expected
-            evidence["sha256_check"] = "match" if ok else "mismatch"
-            if not ok:
-                failures.append("sha256 does not match manifest")
+        if delivery.deliverable_ref != ref:
+            failures.append(f"delivered '{delivery.deliverable_ref}' but contract names '{ref}'")
+
+        # 1. the bytes we received must hash to the hash both parties fixed
+        expected: str | None
+        if contract.good.sha256 is not None:
+            expected = contract.good.sha256
+            evidence["sha256_source"] = "contract"
+        elif ref in self.store.manifest:
+            expected = self.store.manifest[ref]
+            evidence["sha256_source"] = "manifest"
         else:
-            evidence["sha256_check"] = "unknown_ref"
-            failures.append(f"deliverable '{delivery.deliverable_ref}' not in manifest")
+            expected = None
 
-        # 2. registered checkers per good (e.g. "pytest suite passes")
+        received_path = self.store.received(ref)
+        if expected is None:
+            evidence["sha256_check"] = "unknown_ref"
+            failures.append(f"deliverable '{ref}' has no expected sha256 in the contract or manifest")
+        elif not received_path.is_file():
+            evidence["sha256_expected"] = expected
+            evidence["sha256_check"] = "mismatch"
+            failures.append("nothing delivered")
+        else:
+            received = hashlib.sha256(received_path.read_bytes()).hexdigest()
+            evidence["sha256_expected"] = expected
+            evidence["sha256_received"] = received
+            if received != expected:
+                evidence["sha256_check"] = "mismatch"
+                failures.append(f"sha256 does not match {evidence['sha256_source']}")
+            elif reported != received:
+                # The bytes are correct, but the seller's claim about them is false.
+                evidence["sha256_check"] = "mismatch"
+                failures.append("seller-reported hash does not match delivered bytes")
+            else:
+                evidence["sha256_check"] = "match"
+
+        # 2. registered checkers per good (e.g. "exports compose")
+        #    Runs against the bytes that actually arrived, not a path named
+        #    after the good — otherwise this criterion never inspects the
+        #    delivery at all.
         checker = self.checkers.get(contract.good.good_id)
         if checker is not None:
-            artifact = self.store.goods_dir / f"{contract.good.good_id}.bin"
-            ok, detail = checker(artifact, contract.good.good_id)
+            ok, detail = checker(received_path, contract.good.good_id)
             evidence["checker"] = detail
             if not ok:
                 failures.append(detail)

@@ -1,0 +1,547 @@
+"""DealRunner — one scenario, one deal, one tape.
+
+This is pure composition: it constructs the agents, sequences them, and lets
+the shared `Ledger` tell the story. No policy lives here. Where it *does* add
+value is in the four things the plan assumed would be free:
+
+1. **Deal attribution.** `Negotiator._coerce` mints a fresh `deal_id` whenever
+   the LLM omits one, so offer, counter, and contract would each carry a
+   different id and the grid would split one deal into four. The runner pins
+   the id onto every message (`_pin`).
+2. **Correct parties.** `Contract.from_accept` assumes the *buyer* is the
+   accepting sender. When the seller accepts — the normal outcome of the floor
+   clamp — buyer and seller both come out as the seller, and the mandate gate
+   then refuses a perfectly good deal. The runner names both parties.
+3. **State transitions on the tape.** `Deal.transition` records into
+   `deal.history` but never into the ledger, so the grid's signature
+   `state_from -> state_to` column had no data source. `_flush_states` drains
+   the history after each phase.
+4. **Mode.** `scripted` never touches the network, `live` fails loudly,
+   `auto` falls back to scripted and says so on the tape.
+
+5. **Signed identity.** Each run mints fresh Ed25519 keys for buyer, seller,
+   arbiter and the mandates' principal, registers them, signs the demo
+   mandates, has both parties sign the contract, and signs the seller's
+   Delivery and the buyer's Attest before the Trustee sees them. The agents
+   (buyer.py/seller.py) know nothing about keys: the runner signs on their
+   behalf, standing in for each agent's own signer. The Trustee's verifications
+   land on the tape as `identity` rows.
+
+A fallback mints a new deal id rather than replaying over the failed one: a
+half-written tape from a dead live attempt and a complete scripted tape must
+not share a key, or the grid groups two different stories together.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from ..agents.arbiter import ArbiterAgent
+from ..agents.buyer import ArtifactStore, BuyerAgent
+from ..agents.seller import SellerAgent
+from ..agents.trustee import Trustee
+from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry
+from ..ledger import Event, Ledger
+from ..llm import LLM
+from ..mandate import Mandate, MandateEngine
+from ..paypal import EscrowOrder, PayPalClient
+from ..protocol import Accept, Contract, Counter, Offer
+from ..state import Deal, DealState
+from .fixtures import load_mandates
+from .scenario import FIXTURES, Scenario
+from .scripted import ScriptedLLM
+
+log = logging.getLogger(__name__)
+
+BUYER_ID = "buyer-agent-1"
+SELLER_ID = "seller-agent-1"
+ARBITER_ID = "arbiter-agent-1"
+
+MODES = ("auto", "live", "scripted")
+MAX_ROUNDS = 3  # buyer+seller exchanges after the opening offer
+
+Handler = Callable[[Event], None]
+Checker = Callable[[Path, str], "tuple[bool, str]"]
+
+
+# --------------------------------------------------------------------- results
+
+
+@dataclass
+class RunResult:
+    run_id: str
+    deal_id: str
+    scenario: str
+    mode: str  # what the caller asked for
+    effective_mode: str  # what actually ran: live | scripted
+    state: str
+    price: str | None = None
+    turns: int = 0
+    contract: dict[str, Any] | None = None
+    escrow: dict[str, Any] | None = None
+    ruling: dict[str, Any] | None = None
+    attest: dict[str, Any] | None = None
+    error: str | None = None
+    fallback_from: str | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "deal_id": self.deal_id,
+            "scenario": self.scenario,
+            "mode": self.mode,
+            "effective_mode": self.effective_mode,
+            "state": self.state,
+            "price": self.price,
+            "turns": self.turns,
+            "contract": self.contract,
+            "escrow": self.escrow,
+            "ruling": self.ruling,
+            "attest": self.attest,
+            "error": self.error,
+            "fallback_from": self.fallback_from,
+        }
+
+
+# ---------------------------------------------------------------------- runner
+
+
+class DealRunner:
+    def __init__(
+        self,
+        ledger: Ledger,
+        paypal: PayPalClient,
+        mandates: MandateEngine | None = None,
+        store: ArtifactStore | None = None,
+        checkers: dict[str, Checker] | None = None,
+    ):
+        self.ledger = ledger
+        self.paypal = paypal
+        # No engine supplied -> the runner owns the demo mandates and signs them
+        # per run. A caller-supplied engine is used exactly as given.
+        self._owns_mandates = mandates is None
+        self.mandates = mandates or MandateEngine(load_mandates())
+        self.store = store or ArtifactStore.load(FIXTURES)
+        self.checkers = checkers if checkers is not None else default_checkers()
+
+    # ---------------------------------------------------------------- public
+
+    def run(
+        self,
+        scenario: Scenario,
+        mode: str = "auto",
+        on_event: Handler | None = None,
+        run_id: str | None = None,
+    ) -> RunResult:
+        """Execute one deal. Never raises for a run failure: that comes back in
+        `result.error`, so the caller always has something to render."""
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+        requested = mode
+        effective, note = self._resolve_mode(mode)
+        try:
+            return self._run_once(scenario, requested, effective, on_event, run_id, note=note)
+        except Exception as exc:  # noqa: BLE001 - the API must always get a result
+            if effective == "live" and requested in ("auto", "live"):
+                log.warning("live run failed (%s); retrying scripted", exc)
+                return self._run_once(
+                    scenario,
+                    requested,
+                    "scripted",
+                    on_event,
+                    run_id,
+                    note=f"live failed, falling back: {str(exc)[:160]}",
+                    fallback_from="live",
+                )
+            return RunResult(
+                run_id=run_id or f"run_{_short()}",
+                deal_id="",
+                scenario=scenario.name,
+                mode=requested,
+                effective_mode=effective,
+                state="ERROR",
+                error=str(exc),
+            )
+
+    # --------------------------------------------------------------- internals
+
+    def _resolve_mode(self, mode: str) -> tuple[str, str]:
+        if mode == "scripted":
+            return "scripted", "replay only, no model calls"
+        if not os.environ.get("LLM_API_KEY"):
+            # No key configured: don't burn a 401 round-trip to find out.
+            return "scripted", "no model key — replaying a recorded negotiation"
+        return "live", "live model negotiation"
+
+    def _run_once(
+        self,
+        scenario: Scenario,
+        requested: str,
+        effective: str,
+        on_event: Handler | None,
+        run_id: str | None,
+        *,
+        note: str,
+        fallback_from: str | None = None,
+    ) -> RunResult:
+        deal_id = f"deal_{scenario.name}_{_short()}"
+        run_id = run_id or f"run_{_short()}"
+        deal = Deal(deal_id, on_transition=_state_recorder(self.ledger, deal_id))
+        unsubscribe = self.ledger.subscribe(_only(deal_id, on_event)) if on_event else (lambda: None)
+        # Per-run inbox: deliveries must never overwrite the fixture inventory,
+        # or the second run would attest a file the first run corrupted.
+        with tempfile.TemporaryDirectory(prefix="trustee-inbox-") as tmp:
+            store = ArtifactStore(goods_dir=self.store.goods_dir, manifest=self.store.manifest, inbox=Path(tmp))
+            try:
+                self.ledger.append(
+                    deal_id,
+                    "arena",
+                    "run",
+                    event="run_started",
+                    scenario=scenario.name,
+                    mode=requested,
+                    effective_mode=effective,
+                    note=note,
+                )
+                return self._drive(scenario, deal, run_id, requested, effective, fallback_from, store)
+            finally:
+                unsubscribe()
+
+    def _drive(
+        self,
+        scenario: Scenario,
+        deal: Deal,
+        run_id: str,
+        requested: str,
+        effective: str,
+        fallback_from: str | None,
+        store: ArtifactStore,
+    ) -> RunResult:
+        deal_id = deal.deal_id
+        llm = self._build_llm(scenario, effective)
+
+        deal.transition(DealState.NEGOTIATING, "negotiation opened")
+
+        buyer = BuyerAgent(
+            agent_id=BUYER_ID,
+            llm=llm,
+            good=scenario.good,
+            budget=scenario.budget,
+            store=store,
+            checkers=self.checkers,
+            ledger=self.ledger,
+        )
+        seller = SellerAgent(
+            agent_id=SELLER_ID,
+            llm=llm,
+            good=scenario.good,
+            floor_price=scenario.floor,
+            target_price=scenario.ask,
+            store=store,
+            ledger=self.ledger,
+        )
+
+        ident = self._mint_identity()
+        mandates = self._run_mandates(ident)
+
+        contract, turns = self._negotiate(scenario, buyer, seller, deal_id)
+        if contract is None:  # pragma: no cover - the cap always yields a contract
+            return RunResult(
+                run_id, deal_id, scenario.name, requested, effective, deal.state.value,
+                error="no contract within the move cap", fallback_from=fallback_from,
+            )  # fmt: skip
+
+        contract = contract.sign(BUYER_ID, ident.keys[BUYER_ID]).sign(SELLER_ID, ident.keys[SELLER_ID])
+
+        trustee = Trustee(
+            deal=deal,
+            mandates=mandates,
+            paypal=self.paypal,
+            llm=llm,
+            ledger=self.ledger,
+            buyer_email="buyer-sandbox@trustee.dev",
+            seller_email="seller-sandbox@trustee.dev",
+            judge=ArbiterAgent(ARBITER_ID, llm=llm, ledger=self.ledger),
+            registry=ident.registry,
+        )
+
+        decision = trustee.on_contract(contract)
+        if decision.action != "escrowed":
+            # Mandate refusal, PayPal failure, or the approval flow stopping
+            # short of a held authorization: all honest, all terminal here.
+            self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=decision.action)
+            result = self._result(
+                run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from
+            )
+            result.turns = turns
+            result.error = None if decision.action == "rejected_mandate" else decision.action
+            return result
+
+        delivery = seller.deliver(contract, cheat=scenario.cheat).sign(ident.keys[SELLER_ID])
+        trustee.on_delivery(delivery, contract)
+
+        attest = buyer.verify_delivery(contract, delivery).sign(ident.keys[BUYER_ID])
+        trustee.on_attest(attest, contract)
+
+        result = self._result(run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from)
+        result.attest = {"verdict": attest.verdict, "reason": attest.reason, "evidence": attest.evidence}
+        result.turns = turns
+        self.ledger.append(
+            deal_id,
+            "arena",
+            "run",
+            event="run_finished",
+            state=deal.state.value,
+            price=result.price,
+            note=f"{effective} run, {turns} negotiation turns",
+        )
+        return result
+
+    # ------------------------------------------------------------ negotiation
+
+    def _negotiate(
+        self,
+        scenario: Scenario,
+        buyer: BuyerAgent,
+        seller: SellerAgent,
+        deal_id: str,
+    ) -> tuple[Contract | None, int]:
+        opening = scenario.opening_price
+        offer = _pin(buyer.open_deal(opening, SELLER_ID), deal_id)
+        self.ledger.append(
+            deal_id,
+            BUYER_ID,
+            "msg",
+            event="offer",
+            price=str(offer.price),
+            note=f"opens {offer.price} — {_pct(offer.price, scenario.ask)} under the {scenario.ask} ask",
+        )
+        turns = 1
+        their: Offer | Counter = offer
+
+        for _ in range(MAX_ROUNDS):
+            reply = _pin(seller.respond_to(their), deal_id)
+            turns += 1
+            if isinstance(reply, Accept):
+                return self._contract_from(reply, scenario, deal_id), turns
+            their = reply
+
+            answer = _pin(buyer.respond(their.model_dump(mode="json"), opening, max_turns=2), deal_id)
+            turns += 1
+            if isinstance(answer, Accept):
+                self.ledger.append(
+                    deal_id, BUYER_ID, "msg", event="accept", price=str(answer.price), note="accepts the standing price"
+                )
+                return self._contract_from(answer, scenario, deal_id), turns
+            self.ledger.append(
+                deal_id,
+                BUYER_ID,
+                "msg",
+                event="counter",
+                price=str(answer.price),
+                note=f"counters {answer.price} against {their.price}",
+            )
+            their = answer
+
+        # Move cap: end the chat at the standing price. The mandate + escrow
+        # gate still vets the result, so the cap can end a conversation but
+        # never force a bad deal through.
+        self.ledger.append(
+            deal_id,
+            "arena",
+            "run",
+            event="cap_reached",
+            price=str(their.price),
+            note="move cap — accepting the standing price",
+        )
+        accept = Accept(
+            sender=BUYER_ID,
+            responds_to=getattr(their, "msg_id", "cap"),
+            good=scenario.good,
+            price=their.price,
+            deadline=their.deadline,
+            deal_id=deal_id,
+        )
+        return self._contract_from(accept, scenario, deal_id), turns
+
+    @staticmethod
+    def _contract_from(accept: Accept, scenario: Scenario, deal_id: str) -> Contract:
+        contract = Contract.from_accept(accept, seller=SELLER_ID)
+        # `from_accept` calls the accepting sender the buyer; that is only true
+        # when the buyer accepts. Name both parties explicitly. The good is the
+        # scenario's own spec, including its contract sha256, so an LLM-minted
+        # good can never reach the contract.
+        return contract.model_copy(
+            update={"deal_id": deal_id, "buyer": BUYER_ID, "seller": SELLER_ID, "good": scenario.good}
+        )
+
+    # ---------------------------------------------------------------- helpers
+
+    def _mint_identity(self) -> _RunIdentity:
+        """Fresh keys per run: nothing signed here is valid in any other run."""
+        keys = {agent_id: AgentKey.generate() for agent_id in (BUYER_ID, SELLER_ID, ARBITER_ID)}
+        registry = AgentRegistry()
+        for agent_id, role, email in (
+            (BUYER_ID, "buyer", "buyer-sandbox@trustee.dev"),
+            (SELLER_ID, "seller", "seller-sandbox@trustee.dev"),
+            (ARBITER_ID, "arbiter", None),
+        ):
+            registry.register(
+                AgentRecord(
+                    agent_id=agent_id,
+                    public_key=keys[agent_id].public_key_b64,
+                    principal="demo-principal",
+                    roles=frozenset({role}),
+                    paypal_email=email,
+                )
+            )
+        return _RunIdentity(keys=keys, registry=registry, principal_key=AgentKey.generate())
+
+    def _run_mandates(self, ident: _RunIdentity) -> MandateEngine:
+        """The caller's engine as given, or the demo mandates signed by this run's principal."""
+        if not self._owns_mandates:
+            return self.mandates
+        principals = PrincipalRegistry()
+        signed: dict[str, Mandate] = {}
+        for agent_id in (BUYER_ID, SELLER_ID):
+            m = self.mandates.get(agent_id)
+            if m is None:
+                continue
+            principals.register(m.principal, ident.principal_key.public_key_b64)
+            signed[agent_id] = m.sign(ident.principal_key)
+        return MandateEngine(signed, principals=principals)
+
+    def _build_llm(self, scenario: Scenario, effective: str) -> LLM:
+        if effective == "scripted":
+            return ScriptedLLM.from_file(FIXTURES / "transcripts" / f"{scenario.transcript}.json")
+        return LLM()
+
+    def _result(
+        self,
+        run_id: str,
+        deal: Deal,
+        scenario: Scenario,
+        requested: str,
+        effective: str,
+        contract: Contract,
+        escrow: EscrowOrder | None,
+        fallback_from: str | None,
+    ) -> RunResult:
+        ruling = next(
+            (
+                {
+                    "decision": e.payload.get("decision"),
+                    "clause": e.payload.get("clause"),
+                    "reasoning": e.payload.get("reasoning"),
+                    "objective": e.payload.get("objective"),
+                }
+                for e in reversed(self.ledger.tail(deal.deal_id, kinds=("ruling",)))
+            ),
+            None,
+        )
+        return RunResult(
+            run_id=run_id,
+            deal_id=deal.deal_id,
+            scenario=scenario.name,
+            mode=requested,
+            effective_mode=effective,
+            state=deal.state.value,
+            price=str(contract.price),
+            contract=contract.key_clauses(),
+            escrow=(
+                {
+                    "order_id": escrow.order_id,
+                    "authorization_id": escrow.authorization_id,
+                    "status": escrow.status,
+                    "approve_url": escrow.approve_url,
+                }
+                if escrow
+                else None
+            ),
+            ruling=ruling,
+            fallback_from=fallback_from,
+        )
+
+
+# ------------------------------------------------------------------ module bits
+
+
+@dataclass
+class _RunIdentity:
+    keys: dict[str, AgentKey]
+    registry: AgentRegistry
+    principal_key: AgentKey
+
+
+def _pin(msg: Any, deal_id: str) -> Any:
+    """Force the run's deal id onto a protocol message the LLM re-minted."""
+    if getattr(msg, "deal_id", None) == deal_id:
+        return msg
+    return msg.model_copy(update={"deal_id": deal_id})
+
+
+def _state_recorder(ledger: Ledger, deal_id: str) -> Callable[[str, str, str], None]:
+    def record(reason: str, frm: str, to: str) -> None:
+        ledger.append(deal_id, "trustee", "state", event="transition", state_from=frm, state_to=to, note=reason)
+
+    return record
+
+
+def _only(deal_id: str, handler: Handler | None) -> Handler:
+    def emit(ev: Event) -> None:
+        if handler is not None and ev.deal_id == deal_id:
+            handler(ev)
+
+    return emit
+
+
+def _short() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def _pct(price: Decimal, base: Decimal) -> str:
+    if not base:
+        return "0%"
+    return f"{(1 - price / base) * 100:.0f}%"
+
+
+def default_checkers() -> dict[str, Checker]:
+    return {"lambda-module-1": check_lambda_module}
+
+
+def check_lambda_module(artifact: Path, good_id: str) -> tuple[bool, str]:
+    """Criterion 2, executed against the delivered file.
+
+    Parses the shipped module and asserts the exported surface — no import, no
+    execution of seller-supplied code. "Tests pass" would mean running a
+    stranger's code on our box; reading the AST is the honest, safe version of
+    the same claim.
+    """
+    import ast
+    import zipfile
+
+    required = {"compose", "curry", "pipe"}
+    if not artifact.exists():
+        return False, f"artifact missing: {artifact.name}"
+    try:
+        with zipfile.ZipFile(artifact) as zf:
+            source = zf.read("lambda_math.py").decode("utf-8")
+    except (zipfile.BadZipFile, KeyError) as exc:
+        return False, f"not a module archive ({type(exc).__name__})"
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return False, f"module does not parse: {exc.msg}"
+    exported = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    missing = required - exported
+    if missing:
+        return False, f"missing exports: {', '.join(sorted(missing))}"
+    return True, f"exports {', '.join(sorted(required))}"

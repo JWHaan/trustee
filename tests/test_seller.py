@@ -114,7 +114,7 @@ def test_honest_delivery_hash_matches_manifest(store: ArtifactStore):
 
 
 def test_cheat_delivery_hash_mismatches_manifest(store: ArtifactStore):
-    junk = store.goods_dir / f"{GOOD.good_id}-junk.bin"
+    junk = store.goods_dir / "lambda-module-junk.zip"
     junk.write_bytes(b"LAMBDA_CORRUPT")
     seller = make_seller(store, FakeLLM([]))
     contract = _contract()
@@ -124,7 +124,7 @@ def test_cheat_delivery_hash_mismatches_manifest(store: ArtifactStore):
 
 def test_cross_agent_cheat_flow(store: ArtifactStore):
     """The whole demo run 2: seller cheats, buyer's machine check rejects."""
-    junk = store.goods_dir / f"{GOOD.good_id}-junk.bin"
+    junk = store.goods_dir / "lambda-module-junk.zip"
     junk.write_bytes(b"LAMBDA_CORRUPT")
     contract = _contract()
     seller = make_seller(store, FakeLLM([]))

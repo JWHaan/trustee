@@ -1,0 +1,40 @@
+{
+  "scenarios": [
+    {
+      "name": "honest",
+      "title": "Honest seller",
+      "blurb": "The seller ships what the contract describes. Escrow captures on a machine-checked attestation.",
+      "good": {
+        "good_id": "lambda-module-1",
+        "description": "Lambdas math module, tested",
+        "category": "code",
+        "acceptance_criteria": ["sha256 in manifest", "exports compose, curry, pipe"],
+        "deliverable_ref": "lambda-module.zip",
+        "sha256": "88cf4b77e9ba6bb8db680b230a58de33831c5e5a940b8f83792e9c9af2f98399"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest"
+    },
+    {
+      "name": "cheat",
+      "title": "Cheating seller",
+      "blurb": "The buyer loses the negotiation and still keeps its money: the hash fails, the arbiter voids the escrow.",
+      "good": {
+        "good_id": "lambda-module-1",
+        "description": "Lambdas math module, tested",
+        "category": "code",
+        "acceptance_criteria": ["sha256 in manifest", "exports compose, curry, pipe"],
+        "deliverable_ref": "lambda-module.zip",
+        "sha256": "88cf4b77e9ba6bb8db680b230a58de33831c5e5a940b8f83792e9c9af2f98399"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "175.00",
+      "cheat": true,
+      "transcript": "cheat"
+    }
+  ]
+}

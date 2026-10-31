@@ -41,7 +41,7 @@ class FakeLLM(LLM):
 def store(tmp_path: Path) -> ArtifactStore:
     goods = tmp_path / "goods"
     goods.mkdir()
-    honest = goods / "lambda-module-1.bin"
+    honest = goods / GOOD.deliverable_ref  # the checker now reads what was delivered
     honest.write_bytes(b"LAMBDA_OK")
     manifest = {GOOD.deliverable_ref: hashlib.sha256(b"LAMBDA_OK").hexdigest()}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
@@ -110,8 +110,9 @@ def test_cheat_delivery_attests_reject_with_evidence(store: ArtifactStore):
     )
     attest = buyer.verify_delivery(contract_from_test(), delivery)
     assert attest.verdict == "reject"
+    # The inbox bytes are honest, but the seller's claimed hash is false.
     assert attest.evidence["sha256_check"] == "mismatch"
-    assert "manifest" in attest.reason
+    assert "delivered bytes" in attest.reason
 
 
 def test_reject_reason_survives_llm_outage(store: ArtifactStore):
@@ -129,7 +130,7 @@ def test_reject_reason_survives_llm_outage(store: ArtifactStore):
     )
     attest = buyer.verify_delivery(contract_from_test(), delivery)
     assert attest.verdict == "reject"
-    assert "sha256 does not match manifest" in attest.reason
+    assert "seller-reported hash does not match delivered bytes" in attest.reason
 
 
 def contract_from_test():

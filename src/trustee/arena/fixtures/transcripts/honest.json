@@ -1,0 +1,9 @@
+{
+  "_note": "Recorded LLM moves only. Policy decisions (the seller accepting at or above floor) are not recorded — they never touch the model.",
+  "scenario": "honest",
+  "moves": [
+    { "speaker": "buyer", "kind": "offer", "price": "144.00", "note": "opens 20% under the 180 ask" },
+    { "speaker": "seller", "kind": "counter", "price": "168.00", "note": "concedes 12 of the 36 gap" },
+    { "speaker": "buyer", "kind": "counter", "price": "156.00", "note": "splits the difference" }
+  ]
+}

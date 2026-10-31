@@ -1,0 +1,408 @@
+"""Durable SQLite store for Trustee deals, agents, mandates, events and webhooks.
+
+Why this exists: today every deal, agent and mandate lives in process memory. If the service
+restarts while PayPal holds a buyer's money, Trustee forgets the deal exists and nothing ever
+captures or voids it. This store is where those records survive a restart, so open deals can
+be resumed.
+
+This module only builds the store. Wiring it into the API and the Trustee agent happens in a
+later wave. Until then, events reach the store only when a caller explicitly calls `attach`.
+
+Stdlib `sqlite3` only, one connection guarded by a lock. Every write is one transaction.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import threading
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from trustee.ledger import Event, Ledger
+
+log = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 1
+TERMINAL_STATES: tuple[str, ...] = ("SETTLED", "VOIDED")
+
+_V1_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS agents (
+        agent_id TEXT PRIMARY KEY,
+        public_key TEXT NOT NULL,
+        principal TEXT NOT NULL,
+        roles TEXT NOT NULL,
+        paypal_email TEXT,
+        metadata TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS principals (
+        principal TEXT PRIMARY KEY,
+        public_key TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS mandates (
+        agent_id TEXT PRIMARY KEY,
+        principal TEXT NOT NULL,
+        body TEXT NOT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS deals (
+        deal_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        contract TEXT,
+        snapshot TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS deals_state ON deals(state)",
+    """CREATE TABLE IF NOT EXISTS events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        deal_id TEXT,
+        actor TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS events_deal ON events(deal_id)",
+    """CREATE TABLE IF NOT EXISTS webhook_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        resource_id TEXT,
+        received_at TEXT NOT NULL,
+        payload TEXT NOT NULL
+    )""",
+)
+
+
+class StoreConflict(Exception):
+    """A write would silently replace an identity already on record."""
+
+
+class StoreError(Exception):
+    """The database cannot be used, for example because a newer build wrote it."""
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, default=str, sort_keys=True)
+
+
+def _load(text: str | None) -> Any:
+    return None if text is None else json.loads(text)
+
+
+class Store:
+    """Durable record of deals, agents, mandates, events and webhook deliveries."""
+
+    def __init__(self, path: str | Path = ":memory:") -> None:
+        self.path = str(path)
+        self._lock = threading.RLock()
+        if self.path != ":memory:":
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        if self.path != ":memory:":
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        self._migrate()
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def schema_version(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        return int(row["value"]) if row else 0
+
+    @contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        """One write transaction. Serialised by the lock; rolled back on any exception."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
+
+    def _migrate(self) -> None:
+        with self._tx() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+            current = int(row["value"]) if row else 0
+            if current > SCHEMA_VERSION:
+                raise StoreError(f"{self.path} has schema v{current}; this build understands v{SCHEMA_VERSION}")
+            if current < 1:
+                for statement in _V1_STATEMENTS:
+                    conn.execute(statement)
+            if current < SCHEMA_VERSION:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+                    (str(SCHEMA_VERSION),),
+                )
+
+    # -- agents --------------------------------------------------------------
+
+    def put_agent(
+        self,
+        agent_id: str,
+        public_key: str,
+        principal: str,
+        roles: Iterable[str],
+        paypal_email: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Register an agent. Re-registering with a different key raises StoreConflict."""
+        roles_json = _dump(list(roles))
+        metadata_json = _dump(metadata or {})
+        with self._tx() as conn:
+            row = conn.execute("SELECT public_key FROM agents WHERE agent_id = ?", (agent_id,)).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO agents (agent_id, public_key, principal, roles, paypal_email, metadata, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (agent_id, public_key, principal, roles_json, paypal_email, metadata_json, _now()),
+                )
+            elif row["public_key"] != public_key:
+                raise StoreConflict(f"agent {agent_id!r} is registered with a different public key")
+            else:
+                conn.execute(
+                    "UPDATE agents SET principal = ?, roles = ?, paypal_email = ?, metadata = ? WHERE agent_id = ?",
+                    (principal, roles_json, paypal_email, metadata_json, agent_id),
+                )
+
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM agents WHERE agent_id = ?", (agent_id,)).fetchone()
+        return _agent_dict(row) if row else None
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM agents ORDER BY created_at, agent_id").fetchall()
+        return [_agent_dict(r) for r in rows]
+
+    # -- principals ----------------------------------------------------------
+
+    def put_principal(self, principal: str, public_key: str) -> None:
+        """Register a principal. Re-registering with a different key raises StoreConflict."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT public_key FROM principals WHERE principal = ?", (principal,)).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO principals (principal, public_key, created_at) VALUES (?, ?, ?)",
+                    (principal, public_key, _now()),
+                )
+            elif row["public_key"] != public_key:
+                raise StoreConflict(f"principal {principal!r} is registered with a different public key")
+
+    def get_principal(self, principal: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM principals WHERE principal = ?", (principal,)).fetchone()
+        return dict(row) if row else None
+
+    # -- mandates ------------------------------------------------------------
+
+    def put_mandate(self, agent_id: str, principal: str, body: dict[str, Any]) -> None:
+        """Store a mandate. Writing again clears a previous revocation."""
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO mandates (agent_id, principal, body, revoked, updated_at) VALUES (?, ?, ?, 0, ?)"
+                " ON CONFLICT(agent_id) DO UPDATE SET principal = excluded.principal, body = excluded.body,"
+                " revoked = 0, updated_at = excluded.updated_at",
+                (agent_id, principal, _dump(body), _now()),
+            )
+
+    def get_mandate(self, agent_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM mandates WHERE agent_id = ?", (agent_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "agent_id": row["agent_id"],
+            "principal": row["principal"],
+            "body": _load(row["body"]),
+            "revoked": bool(row["revoked"]),
+            "updated_at": row["updated_at"],
+        }
+
+    def revoke_mandate(self, agent_id: str) -> bool:
+        """Mark a mandate revoked. Returns False when no mandate exists for the agent."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "UPDATE mandates SET revoked = 1, updated_at = ? WHERE agent_id = ?",
+                (_now(), agent_id),
+            )
+            return cur.rowcount == 1
+
+    # -- deals ---------------------------------------------------------------
+
+    def upsert_deal(
+        self,
+        deal_id: str,
+        state: str,
+        contract: dict[str, Any] | None,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Insert or update a deal. A None contract keeps the stored contract; the snapshot is replaced."""
+        now = _now()
+        contract_json = None if contract is None else _dump(contract)
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO deals (deal_id, state, contract, snapshot, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(deal_id) DO UPDATE SET state = excluded.state,"
+                " contract = COALESCE(excluded.contract, deals.contract),"
+                " snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+                (deal_id, state, contract_json, _dump(snapshot), now, now),
+            )
+
+    def get_deal(self, deal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM deals WHERE deal_id = ?", (deal_id,)).fetchone()
+        return _deal_dict(row) if row else None
+
+    def list_deals(self, states: Iterable[str] | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """Deals newest first, optionally filtered to the given states."""
+        sql = "SELECT * FROM deals"
+        params: list[Any] = []
+        if states is not None:
+            wanted = list(states)
+            if not wanted:
+                return []
+            sql += f" WHERE state IN ({','.join('?' * len(wanted))})"
+            params.extend(wanted)
+        sql += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [_deal_dict(r) for r in rows]
+
+    def open_deals(self) -> list[dict[str, Any]]:
+        """Every deal that is not SETTLED or VOIDED, oldest first. This is what a restart resumes."""
+        placeholders = ",".join("?" * len(TERMINAL_STATES))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM deals WHERE state NOT IN ({placeholders}) ORDER BY created_at ASC, rowid ASC",
+                TERMINAL_STATES,
+            ).fetchall()
+        return [_deal_dict(r) for r in rows]
+
+    # -- events --------------------------------------------------------------
+
+    def append_event(
+        self,
+        ts: str,
+        deal_id: str | None,
+        actor: str,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> int:
+        """Persist one event and return its sequence number."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT INTO events (ts, deal_id, actor, kind, payload) VALUES (?, ?, ?, ?, ?)",
+                (ts, deal_id, actor, kind, _dump(payload)),
+            )
+            seq = cur.lastrowid
+        if seq is None:
+            raise StoreError("events insert returned no sequence number")
+        return seq
+
+    def events(self, deal_id: str | None = None, after_seq: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
+        """Events in ascending sequence order, after `after_seq`, optionally for one deal."""
+        sql = "SELECT * FROM events WHERE seq > ?"
+        params: list[Any] = [after_seq]
+        if deal_id is not None:
+            sql += " AND deal_id = ?"
+            params.append(deal_id)
+        sql += " ORDER BY seq ASC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [
+            {
+                "seq": r["seq"],
+                "ts": r["ts"],
+                "deal_id": r["deal_id"],
+                "actor": r["actor"],
+                "kind": r["kind"],
+                "payload": _load(r["payload"]),
+            }
+            for r in rows
+        ]
+
+    def attach(self, ledger: Ledger) -> Callable[[], None]:
+        """Persist every event the ledger emits. Returns the unsubscribe callable.
+
+        A storage failure is logged and swallowed here. The money path appends to the ledger
+        and must not stall or raise because the disk is full or the store is closed.
+        """
+
+        def _persist(ev: Event) -> None:
+            try:
+                self.append_event(ev.ts, ev.deal_id, ev.actor, ev.kind, ev.payload)
+            except Exception:  # noqa: BLE001 - storage must never break the ledger
+                log.exception("store: failed to persist ledger event %s; continuing", ev.kind)
+
+        return ledger.subscribe(_persist)
+
+    # -- webhooks ------------------------------------------------------------
+
+    def record_webhook(self, event_id: str, event_type: str, resource_id: str | None, payload: dict[str, Any]) -> bool:
+        """Record a PayPal webhook delivery. Returns False when `event_id` was already recorded."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO webhook_events (event_id, event_type, resource_id, received_at, payload)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (event_id, event_type, resource_id, _now(), _dump(payload)),
+            )
+            return cur.rowcount == 1
+
+    def forget_webhook(self, event_id: str) -> None:
+        """Un-record a delivery we could not act on, so PayPal's retry is processed instead of deduped."""
+        with self._tx() as conn:
+            conn.execute("DELETE FROM webhook_events WHERE event_id = ?", (event_id,))
+
+
+def _agent_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "agent_id": row["agent_id"],
+        "public_key": row["public_key"],
+        "principal": row["principal"],
+        "roles": _load(row["roles"]),
+        "paypal_email": row["paypal_email"],
+        "metadata": _load(row["metadata"]),
+        "created_at": row["created_at"],
+    }
+
+
+def _deal_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "deal_id": row["deal_id"],
+        "state": row["state"],
+        "contract": _load(row["contract"]),
+        "snapshot": _load(row["snapshot"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }

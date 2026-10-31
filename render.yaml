@@ -1,0 +1,41 @@
+# Render blueprint for the arena.
+#
+# Free tier reality check (this is the part the build plan got wrong):
+#   * free web services sleep after 15 minutes with no inbound traffic;
+#   * `healthCheckPath` is only consulted during deploys, it does NOT keep the
+#     instance awake;
+#   * the filesystem is ephemeral, so the JSONL ledger does not survive a
+#     restart — the run registry is in-memory anyway.
+# To keep the demo warm, point an external pinger (UptimeRobot, cron-job.org,
+# a GitHub Action on a schedule) at /healthz every 10 minutes. The UI also
+# tolerates a cold start: it shows a "warming" state rather than a spinner.
+services:
+  - type: web
+    name: trustee-arena
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # --- LLM (NIM by default). Empty key => scripted mode, which still runs
+      #     the entire money path; only the chat is replayed.
+      - key: LLM_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: meta/llama-3.1-70b-instruct
+      # --- PayPal sandbox. Leave both empty for dry-run: the adapter generates
+      #     local order ids and never calls the network.
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_ENV
+        value: sandbox
+      # Return/cancel URLs used by the payer-approval flow (must be absolute).
+      - key: PAYPAL_RETURN_URL
+        value: https://trustee-arena.onrender.com/
+      - key: PAYPAL_CANCEL_URL
+        value: https://trustee-arena.onrender.com/

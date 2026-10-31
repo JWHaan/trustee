@@ -1,0 +1,114 @@
+export type Mode = "auto" | "live" | "scripted";
+
+export interface Row {
+  id: string;
+  seq: number;
+  ts: string;
+  deal: string;
+  actor: string;
+  kind: string;
+  event: string;
+  state_from: string;
+  state_to: string;
+  price: string;
+  verdict: string;
+  paypal_op: string;
+  order_id: string;
+  sha: string;
+  note: string;
+}
+
+export interface Snapshot {
+  run_id: string;
+  deal_id: string | null;
+  scenario: string;
+  mode: Mode;
+  effective_mode: "live" | "scripted" | null;
+  state: string;
+  price: string | null;
+  turns: number;
+  contract: Record<string, string> | null;
+  escrow: { order_id: string; authorization_id: string | null; status: string; approve_url: string | null } | null;
+  ruling: { decision: string; clause: string; reasoning: string } | null;
+  attest: { verdict: string; reason: string; evidence: Record<string, string> } | null;
+  error: string | null;
+  fallback_from: string | null;
+  events: number;
+}
+
+export interface ScenarioInfo {
+  name: string;
+  title: string;
+  blurb: string;
+  ask: string;
+  floor: string;
+  budget: string;
+  opening: string;
+  cheat: boolean;
+}
+
+export async function fetchScenarios(): Promise<ScenarioInfo[]> {
+  const res = await fetch("/api/scenarios");
+  if (!res.ok) throw new Error(`scenarios: ${res.status}`);
+  const body = await res.json();
+  return body.scenarios as ScenarioInfo[];
+}
+
+export async function startRun(scenario: string, mode: Mode): Promise<string> {
+  const res = await fetch("/api/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario, mode }),
+  });
+  if (!res.ok) throw new Error(`start: ${res.status}`);
+  const body = await res.json();
+  return body.run_id as string;
+}
+
+interface StreamHandlers {
+  onRow: (row: Row) => void;
+  onDone: (snap: Snapshot) => void;
+}
+
+/**
+ * Consume the run's SSE stream with fetch rather than EventSource: the server
+ * closes the stream after `done`, and EventSource treats a close as a reason
+ * to reconnect, which would replay the whole tape a second time.
+ */
+export async function streamRun(runId: string, { onRow, onDone }: StreamHandlers, signal: AbortSignal) {
+  const res = await fetch(`/api/runs/${runId}/events`, { signal });
+  if (!res.ok || !res.body) throw new Error(`stream: ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let split: number;
+    while ((split = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+
+      let name = "msg";
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event: ")) name = line.slice(7).trim();
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (!data) continue; // keepalive comment
+      const payload = JSON.parse(data);
+      if (name === "done") onDone(payload as Snapshot);
+      else onRow(payload as Row);
+    }
+  }
+}
+
+export async function fetchSnapshot(runId: string): Promise<Snapshot> {
+  const res = await fetch(`/api/runs/${runId}`);
+  if (!res.ok) throw new Error(`snapshot: ${res.status}`);
+  return (await res.json()) as Snapshot;
+}

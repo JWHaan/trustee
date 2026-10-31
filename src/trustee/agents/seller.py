@@ -9,10 +9,10 @@ setup, not a second code path.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from ..ledger import Ledger
@@ -89,7 +89,13 @@ class SellerAgent(Negotiator):
             deadline=_future(),
             deal_id=deal_id_of(their),
         )
-        self._log("msg", event="accept", price=str(accept.price), note="at or above floor — deal accepted")
+        self._log(
+            "msg",
+            deal_id=deal_id_of(their),
+            event="accept",
+            price=str(accept.price),
+            note="at or above floor — deal accepted",
+        )
         return accept
 
     def _counter(self, their: Any, their_price: Decimal, proposed: Decimal) -> Counter:
@@ -105,7 +111,11 @@ class SellerAgent(Negotiator):
             valid_until=_future(),
         )
         self._log(
-            "msg", event="counter", price=str(counter.price), note=f"their {their_price} < floor {self.floor_price}"
+            "msg",
+            deal_id=deal_id_of(their),
+            event="counter",
+            price=str(counter.price),
+            note=f"their {their_price} < floor {self.floor_price}",
         )
         return counter
 
@@ -129,22 +139,26 @@ class SellerAgent(Negotiator):
     # ----------------------------------------------------------- delivery side
 
     def deliver(self, contract: Contract, cheat: bool = False) -> Delivery:
-        """Hand off the deliverable. Honest: manifest hash. Cheat: junk hash."""
+        """Hand off the deliverable by actually moving bytes into the buyer's
+        inbox. Honest: the contracted artifact. Cheat: its corrupt twin, sent
+        under the contracted name."""
         ref = contract.good.deliverable_ref
-        if cheat:
-            content_hash = self._junk_hash(contract)
-            self._log(
-                "delivery",
-                event="deliver_cheat",
-                ref=ref,
-                sha256=content_hash[:16],
-                note="DEMO: corrupt deliverable intentionally shipped",
-            )
-        else:
-            content_hash = self.store.hash_artifact(ref)
-            if not content_hash:
-                raise RuntimeError(f"artifact missing from store: {ref}")
-            self._log("delivery", event="deliver", ref=ref, sha256=content_hash[:16])
+        source = self.store.goods_dir / (_junk_ref(ref) if cheat else ref)
+        if not source.exists():
+            raise RuntimeError(f"artifact missing from store: {source.name}")
+        content_hash = self.store.receive(ref, source.read_bytes())
+        self._log(
+            "delivery",
+            deal_id=contract.deal_id,
+            event="deliver_cheat" if cheat else "deliver",
+            ref=ref,
+            sha256=content_hash[:16],
+            note=(
+                "DEMO: corrupt deliverable shipped under the contracted name"
+                if cheat
+                else f"delivered {source.name} ({source.stat().st_size} bytes)"
+            ),
+        )
         delivery = Delivery(
             sender=self.agent_id,
             deal_id=contract.deal_id,
@@ -158,17 +172,17 @@ class SellerAgent(Negotiator):
             self.ledger.append(contract.deal_id, self.agent_id, "msg", **dump)
         return delivery
 
-    def _junk_hash(self, contract: Contract) -> str:
-        junk = self.store.goods_dir / f"{contract.good.good_id}-junk.bin"
-        if junk.exists():
-            return hashlib.sha256(junk.read_bytes()).hexdigest()
-        return "0" * 64  # deterministic mismatch — the buyer's manifest check catches it
-
     # ------------------------------------------------------------ internals
 
-    def _log(self, kind: str, **payload: Any) -> None:
+    def _log(self, kind: str, deal_id: str | None = None, **payload: Any) -> None:
         if self.ledger is not None:
-            self.ledger.append(None, self.agent_id, kind, **payload)
+            self.ledger.append(deal_id, self.agent_id, kind, **payload)
+
+
+def _junk_ref(ref: str) -> str:
+    """`lambda-module.zip` -> `lambda-module-junk.zip`."""
+    p = Path(ref)
+    return f"{p.stem}-junk{p.suffix}"
 
 
 def _future() -> datetime:

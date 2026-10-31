@@ -125,12 +125,10 @@ class Negotiator:
         price = payload.get("price")
         if price is not None:
             payload["price"] = Decimal(str(price)).quantize(Decimal("0.01"))
-        # Merge the LLM's "good" over our known spec so required fields can't
-        # be missing; validation still enforces types.
-        if "good" in payload and isinstance(payload["good"], dict):
-            merged = self.good.model_dump(mode="json")
-            merged.update(payload["good"])
-            payload["good"] = GoodSpec.model_validate(merged)
+        # The good is fixed before the first turn. Any "good" the LLM emits is
+        # ignored, so it cannot change the deliverable, its hash or the
+        # acceptance criteria. Price is the only term the model may move.
+        payload["good"] = self.good
         for field in ("deadline", "valid_until"):
             payload.pop(field, None)
         now = _now()
