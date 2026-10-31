@@ -63,6 +63,7 @@ from ..ledger import Event, Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine
 from ..network import Northwind, Tidewater
+from ..network.remote import RemoteNetwork
 from ..paypal import EscrowOrder, PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Accept, Contract, Counter, Offer
 from ..state import Deal, DealState
@@ -495,6 +496,7 @@ class DealRunner:
                 wait=self.approval_wait,
                 northwind=northwind,
                 tidewater=tidewater,
+                remote=RemoteNetwork.from_env(),
             )
             done = flow.run()
         finally:

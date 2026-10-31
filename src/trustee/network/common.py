@@ -20,6 +20,9 @@ Nothing here can move money. Money moves only through Trustee, on messages signe
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -193,6 +196,27 @@ class AgentIdentity:
             role,
             paypal_email,
         )
+
+    @classmethod
+    def from_secret(
+        cls, secret: str, agent_base: str, principal_base: str, role: str, paypal_email: str
+    ) -> AgentIdentity:
+        """The same identity at every start, derived from one secret (urlsafe base64 of at least 32 bytes).
+
+        Both Ed25519 keys are HMAC-SHA256 of the secret under distinct labels and the id suffix comes from the
+        agent's public key, so a hosted agent keeps its id and keys across restarts and redeploys. Whoever holds
+        the secret holds both keys; `scripts/gen_agent_secret.py` makes one. Never log it."""
+        text = secret.strip()
+        try:
+            seed = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        except ValueError:
+            raise ValueError("the identity secret is not valid base64") from None
+        if len(seed) < 32:
+            raise ValueError("the identity secret must decode to at least 32 bytes")
+        agent_key = AgentKey.from_private_bytes(hmac.new(seed, b"trustee/agent-key/v1", "sha256").digest())
+        principal_key = AgentKey.from_private_bytes(hmac.new(seed, b"trustee/principal-key/v1", "sha256").digest())
+        suffix = hashlib.sha256(agent_key.public_key_b64.encode()).hexdigest()[:8]
+        return cls(f"{agent_base}-{suffix}", f"{principal_base}-{suffix}", agent_key, principal_key, role, paypal_email)
 
     @property
     def public_key(self) -> str:
@@ -697,7 +721,8 @@ def default_llm(mode: str = "auto") -> LLM:
     honest negotiation. A scripted model that runs out of moves makes the agents fall back to their policy."""
     from ..arena.fixtures import TRANSCRIPTS
     from ..arena.scripted import ScriptedLLM
+    from ..llm import gateway_from_env
 
-    if mode == "live" or (mode == "auto" and os.environ.get("LLM_API_KEY")):
+    if mode == "live" or (mode == "auto" and (os.environ.get("LLM_API_KEY") or gateway_from_env())):
         return LLM()
     return ScriptedLLM.from_file(TRANSCRIPTS / "honest.json")
