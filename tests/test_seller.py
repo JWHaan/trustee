@@ -16,11 +16,11 @@ from trustee.llm import LLM
 from trustee.protocol import Contract, Counter, GoodSpec
 
 GOOD = GoodSpec(
-    good_id="lambda-module-1",
-    description="Lambdas math module, tested",
+    good_id="returns-dataset-2026q3",
+    description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
     category="code",
     acceptance_criteria=["sha256 in manifest", "tests pass"],
-    deliverable_ref="lambda-module.zip",
+    deliverable_ref="returns-2026q3.csv",
 )
 
 
@@ -37,9 +37,9 @@ class FakeLLM(LLM):
 def store(tmp_path: Path) -> ArtifactStore:
     goods = tmp_path / "goods"
     goods.mkdir()
-    honest = goods / "lambda-module.zip"
-    honest.write_bytes(b"LAMBDA_OK")
-    manifest = {GOOD.deliverable_ref: hashlib.sha256(b"LAMBDA_OK").hexdigest()}
+    honest = goods / "returns-2026q3.csv"
+    honest.write_bytes(b"RETURNS_OK")
+    manifest = {GOOD.deliverable_ref: hashlib.sha256(b"RETURNS_OK").hexdigest()}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     return ArtifactStore.load(tmp_path)
 
@@ -114,8 +114,8 @@ def test_honest_delivery_hash_matches_manifest(store: ArtifactStore):
 
 
 def test_cheat_delivery_hash_mismatches_manifest(store: ArtifactStore):
-    junk = store.goods_dir / "lambda-module-junk.zip"
-    junk.write_bytes(b"LAMBDA_CORRUPT")
+    junk = store.goods_dir / "returns-2026q3-junk.csv"
+    junk.write_bytes(b"RETURNS_CORRUPT")
     seller = make_seller(store, FakeLLM([]))
     contract = _contract()
     delivery = seller.deliver(contract, cheat=True)
@@ -124,8 +124,8 @@ def test_cheat_delivery_hash_mismatches_manifest(store: ArtifactStore):
 
 def test_cross_agent_cheat_flow(store: ArtifactStore):
     """The whole demo run 2: seller cheats, buyer's machine check rejects."""
-    junk = store.goods_dir / "lambda-module-junk.zip"
-    junk.write_bytes(b"LAMBDA_CORRUPT")
+    junk = store.goods_dir / "returns-2026q3-junk.csv"
+    junk.write_bytes(b"RETURNS_CORRUPT")
     contract = _contract()
     seller = make_seller(store, FakeLLM([]))
 

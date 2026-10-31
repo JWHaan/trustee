@@ -62,7 +62,7 @@ class GoodSpec(BaseModel):
         min_length=1, description="Machine-checkable clauses, e.g. 'sha256 in manifest', 'tests pass'"
     )
     deliverable_ref: str = Field(
-        description="Path under the goods store the seller must deliver, e.g. 'lambda-module.zip'"
+        description="Path under the goods store the seller must deliver, e.g. 'returns-2026q3.csv'"
     )
     sha256: str | None = Field(
         default=None,

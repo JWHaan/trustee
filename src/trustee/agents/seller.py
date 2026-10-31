@@ -180,7 +180,7 @@ class SellerAgent(Negotiator):
 
 
 def _junk_ref(ref: str) -> str:
-    """`lambda-module.zip` -> `lambda-module-junk.zip`."""
+    """`returns-2026q3.csv` -> `returns-2026q3-junk.csv`."""
     p = Path(ref)
     return f"{p.stem}-junk{p.suffix}"
 

@@ -2,21 +2,21 @@
   "mandates": [
     {
       "agent_id": "buyer-agent-1",
-      "principal": "demo-principal (human)",
+      "principal": "Northwind Outfitters — finance ops (human)",
       "grants": "spend",
       "max_amount": "500.00",
       "allowed_categories": ["code", "data", "design", "api-access"],
       "allowed_counterparties": ["seller-agent-1"],
-      "notes": "Autonomous spend up to 500 USD on digital goods, only with this seller."
+      "notes": "Northwind's demand-planning agent may spend up to 500 USD per deal on digital goods (datasets, API access, design, code), only with Tidewater Data Co.'s sales agent."
     },
     {
       "agent_id": "seller-agent-1",
-      "principal": "demo-principal (human)",
+      "principal": "Tidewater Data Co. — sales ops (human)",
       "grants": "receive",
       "max_amount": "500.00",
       "allowed_categories": ["code", "data", "design", "api-access"],
       "allowed_counterparties": ["buyer-agent-1"],
-      "notes": "May receive settlement from this buyer only."
+      "notes": "Tidewater's sales agent may receive settlement from Northwind Outfitters' buying agent only."
     }
   ]
 }

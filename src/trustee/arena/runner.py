@@ -40,7 +40,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -513,35 +513,69 @@ def _pct(price: Decimal, base: Decimal) -> str:
     return f"{(1 - price / base) * 100:.0f}%"
 
 
+RETURNS_COLUMNS = ("order_id", "sku", "category", "order_date", "return_date", "reason_code", "refund_usd")
+RETURNS_MIN_ROWS = 5000
+
+
 def default_checkers() -> dict[str, Checker]:
-    return {"lambda-module-1": check_lambda_module}
+    return {"returns-dataset-2026q3": check_returns_dataset}
 
 
-def check_lambda_module(artifact: Path, good_id: str) -> tuple[bool, str]:
-    """Criterion 2, executed against the delivered file.
+def check_returns_dataset(artifact: Path, good_id: str) -> tuple[bool, str]:
+    """Criteria 2 and 3, executed against the delivered bytes.
 
-    Parses the shipped module and asserts the exported surface — no import, no
-    execution of seller-supplied code. "Tests pass" would mean running a
-    stranger's code on our box; reading the AST is the honest, safe version of
-    the same claim.
+    Reads the CSV with the stdlib reader and checks it against the contract's
+    schema and row rules. Nothing in the file is imported or run, so a seller's
+    content never executes on the buyer's machine. Every failure starts with
+    "failed", the marker the arbiter keys its objective-breach rule on.
     """
-    import ast
-    import zipfile
+    import csv
+    import io
+    from datetime import date
 
-    required = {"compose", "curry", "pipe"}
     if not artifact.exists():
-        return False, f"artifact missing: {artifact.name}"
+        return False, f"failed: artifact missing: {artifact.name}"
     try:
-        with zipfile.ZipFile(artifact) as zf:
-            source = zf.read("lambda_math.py").decode("utf-8")
-    except (zipfile.BadZipFile, KeyError) as exc:
-        return False, f"not a module archive ({type(exc).__name__})"
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return False, f"module does not parse: {exc.msg}"
-    exported = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
-    missing = required - exported
-    if missing:
-        return False, f"missing exports: {', '.join(sorted(missing))}"
-    return True, f"exports {', '.join(sorted(required))}"
+        text = artifact.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return False, f"failed: not readable as UTF-8 text ({type(exc).__name__})"
+
+    reader = csv.reader(io.StringIO(text, newline=""))
+    header = next(reader, None)
+    if header is None or tuple(header) != RETURNS_COLUMNS:
+        found = ",".join(header or [])[:120]
+        return False, f"failed: schema mismatch, header is {found or '(empty)'}"
+
+    seen: set[str] = set()
+    rows = 0
+    for line_no, row in enumerate(reader, start=2):
+        if len(row) != len(RETURNS_COLUMNS):
+            return False, f"failed: line {line_no} has {len(row)} fields, expected {len(RETURNS_COLUMNS)}"
+        rec = dict(zip(RETURNS_COLUMNS, row, strict=True))
+        order_id = rec["order_id"].strip()
+        if not order_id:
+            return False, f"failed: blank order_id at line {line_no}"
+        if order_id in seen:
+            return False, f"failed: duplicate order_id {order_id} at line {line_no}"
+        seen.add(order_id)
+        refund_raw = rec["refund_usd"].strip()
+        if not refund_raw:
+            return False, f"failed: blank refund_usd at line {line_no}"
+        try:
+            refund = Decimal(refund_raw)
+        except InvalidOperation:
+            return False, f"failed: refund_usd '{refund_raw[:20]}' is not a number at line {line_no}"
+        if not refund.is_finite() or refund < 0:
+            return False, f"failed: refund_usd must be a non-negative amount at line {line_no}"
+        try:
+            ordered = date.fromisoformat(rec["order_date"])
+            returned = date.fromisoformat(rec["return_date"])
+        except ValueError:
+            return False, f"failed: bad ISO date at line {line_no}"
+        if returned < ordered:
+            return False, f"failed: return_date before order_date at line {line_no}"
+        rows += 1
+
+    if rows < RETURNS_MIN_ROWS:
+        return False, f"failed: {rows} rows, need at least {RETURNS_MIN_ROWS}"
+    return True, f"schema ok, {rows} rows"

@@ -1,0 +1,43 @@
+# Keeps the free Render instance warm by requesting /healthz every 10 minutes.
+#
+# Free web services sleep after 15 minutes without inbound traffic. The first
+# request after a sleep can take ~50 s while the instance wakes, so curl retries.
+#
+# Caveats:
+#   * GitHub may delay scheduled runs by several minutes under load, so this
+#     keeps the instance warm on a best-effort basis, not to the second;
+#   * scheduled workflows run only from the default branch;
+#   * GitHub disables scheduled workflows in a repository after 60 days without
+#     repository activity. Push a commit or re-enable the workflow if the pings stop.
+#
+# Setup: Settings -> Secrets and variables -> Actions -> Variables ->
+# TRUSTEE_DEMO_URL = the deployed base URL (no trailing slash). Until it is set,
+# this job prints a notice and exits 0.
+
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions: {}
+    steps:
+      - name: Ping /healthz
+        env:
+          # Passed through the environment, never interpolated into the script.
+          DEMO_URL: ${{ vars.TRUSTEE_DEMO_URL }}
+        run: |
+          if [ -z "$DEMO_URL" ]; then
+            echo "::notice::TRUSTEE_DEMO_URL is not set; skipping keep-alive ping."
+            exit 0
+          fi
+          DEMO_URL="${DEMO_URL%/}"
+          curl -fsS --retry 3 --retry-delay 20 --max-time 60 "$DEMO_URL/healthz"
+          echo

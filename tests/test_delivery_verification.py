@@ -25,13 +25,13 @@ HONEST = b"HONEST_MODULE"
 JUNK = b"JUNK_MODULE"
 HONEST_HASH = hashlib.sha256(HONEST).hexdigest()
 JUNK_HASH = hashlib.sha256(JUNK).hexdigest()
-REF = "lambda-module.zip"
+REF = "returns-2026q3.csv"
 
 
 def make_good(sha256: str | None = HONEST_HASH) -> GoodSpec:
     return GoodSpec(
-        good_id="lambda-module-1",
-        description="Lambdas math module, tested",
+        good_id="returns-dataset-2026q3",
+        description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
         category="code",
         acceptance_criteria=["sha256 in manifest"],
         deliverable_ref=REF,
@@ -179,7 +179,7 @@ def test_checker_still_runs_on_received_bytes(tmp_path: Path):
 
     store = make_store(tmp_path, manifest={}, received=HONEST)
     buyer = make_buyer(store)
-    buyer.checkers = {"lambda-module-1": checker}
+    buyer.checkers = {"returns-dataset-2026q3": checker}
     buyer.verify_delivery(make_contract(make_good(HONEST_HASH)), make_delivery(HONEST_HASH))
 
     assert seen == [HONEST]

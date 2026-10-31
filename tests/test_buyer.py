@@ -15,11 +15,11 @@ from trustee.llm import LLM
 from trustee.protocol import Accept, Delivery, GoodSpec
 
 GOOD = GoodSpec(
-    good_id="lambda-module-1",
-    description="Lambdas math module, tested",
+    good_id="returns-dataset-2026q3",
+    description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
     category="code",
     acceptance_criteria=["sha256 in manifest", "tests pass"],
-    deliverable_ref="lambda-module.zip",
+    deliverable_ref="returns-2026q3.csv",
 )
 
 
@@ -42,15 +42,15 @@ def store(tmp_path: Path) -> ArtifactStore:
     goods = tmp_path / "goods"
     goods.mkdir()
     honest = goods / GOOD.deliverable_ref  # the checker now reads what was delivered
-    honest.write_bytes(b"LAMBDA_OK")
-    manifest = {GOOD.deliverable_ref: hashlib.sha256(b"LAMBDA_OK").hexdigest()}
+    honest.write_bytes(b"RETURNS_OK")
+    manifest = {GOOD.deliverable_ref: hashlib.sha256(b"RETURNS_OK").hexdigest()}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     return ArtifactStore.load(tmp_path)
 
 
 def make_buyer(store: ArtifactStore, llm: FakeLLM) -> BuyerAgent:
     def tests_pass(artifact: Path, _good_id: str) -> tuple[bool, str]:
-        ok = artifact.exists() and b"LAMBDA_OK" in artifact.read_bytes()
+        ok = artifact.exists() and b"RETURNS_OK" in artifact.read_bytes()
         return ok, "tests pass" if ok else "tests failed"
 
     return BuyerAgent(
@@ -59,7 +59,7 @@ def make_buyer(store: ArtifactStore, llm: FakeLLM) -> BuyerAgent:
         good=GOOD,
         budget=Decimal("200.00"),
         store=store,
-        checkers={"lambda-module-1": tests_pass},
+        checkers={"returns-dataset-2026q3": tests_pass},
         ledger=Ledger(),
     )
 

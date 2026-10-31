@@ -43,9 +43,11 @@ mandate check happens *before* authorize so no money can touch a forbidden deal.
 
 - **Run 1 (honest):** agents negotiate → contract → escrow → delivery +
   attestation → settled. Funds moved, zero human intervention.
-- **Run 2 (cheat):** seller ships a junk deliverable (pre-seeded flag) →
-  buyer attests reject → arbiter cites contract clause → auto-void + refund
-  event. Shows *why the trust layer matters*.
+- **Run 2 (cheat):** seller ships a junk returns export under the contracted file
+  name (renamed column, 312 rows, duplicate order ids) → buyer attests reject →
+  arbiter cites the contract's sha256 criterion → auto-void + refund event. Shows
+  *why the trust layer matters*. The honest run's schema check (header, row count,
+  unique order ids, valid refunds and dates) is the second half of the same story.
 
 ## Build order (agents first, platform last)
 

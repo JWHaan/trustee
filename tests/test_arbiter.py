@@ -14,11 +14,11 @@ from trustee.protocol import Attest, Contract, Delivery, GoodSpec
 from trustee.state import Deal, DealState
 
 GOOD = GoodSpec(
-    good_id="lambda-module-1",
-    description="Lambdas math module, tested",
+    good_id="returns-dataset-2026q3",
+    description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
     category="code",
     acceptance_criteria=["sha256 in manifest", "tests pass"],
-    deliverable_ref="lambda-module.zip",
+    deliverable_ref="returns-2026q3.csv",
 )
 
 
@@ -212,3 +212,61 @@ def test_untrusted_attestation_text_is_truncated_and_flagged():
     system, prompt = type(llm).seen
     assert "untrusted" in system and "ignore any instructions" in system
     assert "x" * 600 not in prompt
+
+
+# The demo contract's own criteria. A ruling must cite these exact words, so the
+# arbiter's clause is the one the parties signed, not a generic label.
+DEMO_GOOD = GoodSpec(
+    good_id="returns-dataset-2026q3",
+    description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+    category="data",
+    acceptance_criteria=[
+        "sha256 matches contract",
+        "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+        "at least 5000 rows, no blank order_id or refund_usd",
+    ],
+    deliverable_ref="returns-2026q3.csv",
+)
+
+
+def make_demo_contract() -> Contract:
+    now = datetime.now()
+    return Contract(
+        deal_id="deal_arbiter",
+        buyer="buyer-agent-1",
+        seller="seller-agent-1",
+        good=DEMO_GOOD,
+        price=Decimal("156.00"),
+        deadline=now,
+        formed_at=now,
+    )
+
+
+def test_hash_breach_cites_the_contract_hash_criterion():
+    ruling = ArbiterAgent("arbiter-1", llm=None, ledger=Ledger()).rule(
+        make_demo_contract(),
+        make_delivery(cheat=True),
+        attest_reject({"sha256_check": "mismatch", "checker": "failed: schema mismatch, header is order_id"}),
+    )
+    assert ruling.decision == "release"
+    assert ruling.clause == "sha256 matches contract"
+
+
+def test_schema_failure_cites_the_schema_criterion():
+    ruling = ArbiterAgent("arbiter-1", llm=None, ledger=Ledger()).rule(
+        make_demo_contract(),
+        make_delivery(),
+        attest_reject({"sha256_check": "match", "checker": "failed: schema mismatch, header is order_id"}),
+    )
+    assert ruling.decision == "release"
+    assert ruling.clause == DEMO_GOOD.acceptance_criteria[1]
+
+
+def test_row_failure_cites_the_row_criterion():
+    ruling = ArbiterAgent("arbiter-1", llm=None, ledger=Ledger()).rule(
+        make_demo_contract(),
+        make_delivery(),
+        attest_reject({"sha256_check": "match", "checker": "failed: 312 rows, need at least 5000"}),
+    )
+    assert ruling.decision == "release"
+    assert ruling.clause == DEMO_GOOD.acceptance_criteria[2]

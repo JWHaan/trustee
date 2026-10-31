@@ -69,13 +69,30 @@ def _match_criterion(contract: Contract, cited: object) -> str | None:
     return None
 
 
-def _objective_breach(attest: Attest) -> str | None:
-    """Return the violated clause if the evidence shows an objective breach."""
+def _criterion_containing(contract: Contract, needle: str) -> str | None:
+    """The contract's own spelling of the first criterion that mentions `needle`."""
+    for criterion in contract.good.acceptance_criteria:
+        if needle in criterion.lower():
+            return criterion
+    return None
+
+
+def _objective_breach(attest: Attest, contract: Contract) -> str | None:
+    """Return the violated clause if the evidence shows an objective breach.
+
+    The clause is the contract's own criterion when it has one, so the ruling
+    cites the words the parties signed. A contract without a matching criterion
+    falls back to the generic labels older contracts were ruled under.
+    """
     evidence = attest.evidence
     if evidence.get("sha256_check") in ("mismatch", "unknown_ref"):
-        return "sha256 in manifest"
-    if "failed" in evidence.get("checker", ""):
-        return "tests pass"
+        return _criterion_containing(contract, "sha256") or "sha256 in manifest"
+    detail = evidence.get("checker", "")
+    if "failed" in detail:
+        # A schema failure cites the schema clause; any other checker failure
+        # (row count, blank or bad values, duplicate ids) cites the row clause.
+        needle = "schema" if "schema" in detail else "rows"
+        return _criterion_containing(contract, needle) or "tests pass"
     return None
 
 
@@ -92,7 +109,7 @@ class ArbiterAgent(Judge):
             # No dispute: settlement proceeds. Recorded for the ledger tape.
             return Ruling("release", "settlement clause", "buyer attested accept; funds settle", objective=True)
 
-        clause = _objective_breach(attest)
+        clause = _objective_breach(attest, contract)
         if clause is not None:
             # Objective breach: deterministic release, no LLM involved in the decision.
             # (An un-evidenced reject never reaches here; it goes to the judged path

@@ -10,6 +10,17 @@ budget caps, counterparty allowlists, TTLs), holds the money in **PayPal escrow*
 auto-unwinds (voids + refunds) when the deal fails. Every decision lands in an
 append-only **ledger** that the arena UI tapes out in AG Grid.
 
+## Who it's for
+
+Any business whose agents buy data, API access or digital work from another
+company's agents. The worked example in this repo: **Northwind Outfitters**, a
+mid-size online apparel retailer, has a demand-planning agent that buys a Q3
+returns dataset from **Tidewater Data Co.**, a retail-data vendor. Northwind's
+finance ops lead grants the buying agent a $500 spend mandate: digital data
+only, this vendor only. Tidewater's sales agent delivers the CSV. Trustee holds
+the payment until the file's hash and schema match the signed contract, then
+settles it. If the file is wrong, the money goes back to Northwind.
+
 ## Money path
 
 ```
@@ -17,7 +28,7 @@ contract formed
   -> mandate gate (no LLM: hard policy)        rejected? deal dies, money untouched
   -> PayPal Orders.create + authorize           funds HELD, not moved
   -> seller agent delivers (bytes + sha256)
-  -> buyer agent attests (hash + AST check on the delivered file)
+  -> buyer agent attests (sha256 + CSV schema and row checks on the delivered file)
        accept -> capture  (settled to seller)
        reject -> arbiter -> void (refund)  |  deadline lapse -> auto-void
 ```
@@ -195,7 +206,7 @@ tests/               219 tests: agents, runner, API, SSE, PayPal request shapes,
 |---|---|---|
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | empty | empty ⇒ dry-run with local order ids |
 | `PAYPAL_ENV` | `sandbox` | `sandbox` \| `live` |
-| `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL` | example.com | used by the payer-approval redirect |
+| `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL` | `{TRUSTEE_PUBLIC_URL}/v1/paypal/return` / `/cancel` | used by the payer-approval redirect |
 | `LLM_BASE_URL` | NIM | any OpenAI-compatible endpoint |
 | `LLM_API_KEY` | empty | empty ⇒ scripted mode |
 | `LLM_MODEL` | `meta/llama-3.1-70b-instruct` | |
@@ -204,11 +215,13 @@ tests/               219 tests: agents, runner, API, SSE, PayPal request shapes,
 
 ## Demo plan (≤3 min)
 
-1. **Honest run** — agents negotiate 144 → 168 → 156, contract, escrow, delivery,
-   machine-checked attestation, capture. Zero human money-touch.
-2. **Cheat run** — the buyer loses the negotiation at 170, the seller ships a
-   corrupt module, the hash fails, the arbiter cites the clause, escrow voids.
-   The buyer keeps its money. *That* is why the trust layer exists.
+1. **Honest run** — Northwind's agent and Tidewater's agent negotiate 144 → 168 → 156
+   for the Q3 returns dataset. Then the contract, escrow, delivery, machine-checked
+   attestation (hash matches, schema passes, 5,000 rows), capture. Zero human money-touch.
+2. **Cheat run** — the buyer caves at 170. Tidewater ships a junk export under the
+   contracted file name: a renamed column, 312 rows, reused order ids. The sha256
+   fails, the arbiter cites "sha256 matches contract", escrow voids. Northwind keeps
+   its money. *That* is why the trust layer exists.
 
 ## Status
 

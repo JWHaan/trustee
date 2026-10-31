@@ -146,7 +146,7 @@ class BuyerAgent(Negotiator):
             else:
                 evidence["sha256_check"] = "match"
 
-        # 2. registered checkers per good (e.g. "exports compose")
+        # 2. registered checkers per good (e.g. "schema: order_id, sku, ...")
         #    Runs against the bytes that actually arrived, not a path named
         #    after the good — otherwise this criterion never inspects the
         #    delivery at all.

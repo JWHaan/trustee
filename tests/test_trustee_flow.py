@@ -15,11 +15,11 @@ from trustee.protocol import Accept, Attest, Contract, Delivery, GoodSpec
 from trustee.state import Deal, DealState
 
 GOOD = GoodSpec(
-    good_id="lambda-module-1",
-    description="Lambdas math module, tested",
+    good_id="returns-dataset-2026q3",
+    description="Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
     category="code",
     acceptance_criteria=["sha256 in manifest", "pytest suite passes"],
-    deliverable_ref="goods/lambda-module.zip",
+    deliverable_ref="goods/returns-2026q3.csv",
 )
 
 

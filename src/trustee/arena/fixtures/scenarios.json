@@ -3,14 +3,18 @@
     {
       "name": "honest",
       "title": "Honest seller",
-      "blurb": "The seller ships what the contract describes. Escrow captures on a machine-checked attestation.",
+      "blurb": "Tidewater ships the Q3 returns dataset Northwind paid for. Escrow captures on a machine-checked attestation: hash and schema both pass.",
       "good": {
-        "good_id": "lambda-module-1",
-        "description": "Lambdas math module, tested",
-        "category": "code",
-        "acceptance_criteria": ["sha256 in manifest", "exports compose, curry, pipe"],
-        "deliverable_ref": "lambda-module.zip",
-        "sha256": "88cf4b77e9ba6bb8db680b230a58de33831c5e5a940b8f83792e9c9af2f98399"
+        "good_id": "returns-dataset-2026q3",
+        "description": "Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+          "at least 5000 rows, no blank order_id or refund_usd"
+        ],
+        "deliverable_ref": "returns-2026q3.csv",
+        "sha256": "6662797c62331e3df61cb4f4dd0e0143430fb02968c868d66794147ccea9ade0"
       },
       "ask": "180.00",
       "floor": "150.00",
@@ -21,14 +25,18 @@
     {
       "name": "cheat",
       "title": "Cheating seller",
-      "blurb": "The buyer loses the negotiation and still keeps its money: the hash fails, the arbiter voids the escrow.",
+      "blurb": "Tidewater ships a junk export under the contracted file name: a renamed column, 312 rows and reused order ids. The hash fails, the arbiter cites the contract and voids the escrow.",
       "good": {
-        "good_id": "lambda-module-1",
-        "description": "Lambdas math module, tested",
-        "category": "code",
-        "acceptance_criteria": ["sha256 in manifest", "exports compose, curry, pipe"],
-        "deliverable_ref": "lambda-module.zip",
-        "sha256": "88cf4b77e9ba6bb8db680b230a58de33831c5e5a940b8f83792e9c9af2f98399"
+        "good_id": "returns-dataset-2026q3",
+        "description": "Q3 2026 online-retail returns dataset (5,000 orders, CSV)",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: order_id, sku, category, order_date, return_date, reason_code, refund_usd",
+          "at least 5000 rows, no blank order_id or refund_usd"
+        ],
+        "deliverable_ref": "returns-2026q3.csv",
+        "sha256": "6662797c62331e3df61cb4f4dd0e0143430fb02968c868d66794147ccea9ade0"
       },
       "ask": "180.00",
       "floor": "150.00",

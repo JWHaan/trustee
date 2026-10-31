@@ -66,7 +66,7 @@ SKILLS: list[dict[str, Any]] = [
         "Record a delivery",
         "POST /v1/deals/{id}/delivery: the seller reports the deliverable and its sha256, signed.",
         ["delivery"],
-        ["Report delivery of lambda-module.zip with its content hash"],
+        ["Report delivery of returns-2026q3.csv with its content hash"],
     ),
     _skill(
         "attest-delivery",

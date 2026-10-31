@@ -1,14 +1,20 @@
 # Render blueprint for the arena.
 #
-# Free tier reality check (this is the part the build plan got wrong):
+# Free tier reality check:
 #   * free web services sleep after 15 minutes with no inbound traffic;
 #   * `healthCheckPath` is only consulted during deploys, it does NOT keep the
-#     instance awake;
-#   * the filesystem is ephemeral, so the JSONL ledger does not survive a
-#     restart — the run registry is in-memory anyway.
-# To keep the demo warm, point an external pinger (UptimeRobot, cron-job.org,
-# a GitHub Action on a schedule) at /healthz every 10 minutes. The UI also
-# tolerates a cold start: it shows a "warming" state rather than a spinner.
+#     instance awake. .github/workflows/keepalive.yml pings /healthz every
+#     10 minutes to keep it warm (set repo variable TRUSTEE_DEMO_URL);
+#   * the free plan has no persistent disk. TRUSTEE_DB_PATH is therefore left
+#     unset and the platform store is in-memory. A restart forgets platform
+#     deals, and PayPal sandbox authorizations then expire on their own. That is
+#     acceptable for a demo, not for production. Set TRUSTEE_DB_PATH only after
+#     moving to a paid plan with a disk;
+#   * the JSONL ledger (TRUSTEE_LEDGER_PATH) is unset for the same reason.
+# The UI also tolerates a cold start: it shows a "warming" state, not a spinner.
+#
+# Secrets marked `sync: false` are entered in the Render dashboard, never here.
+# See docs/DEPLOY.md for the one-time setup.
 services:
   - type: web
     name: trustee-arena
@@ -32,10 +38,20 @@ services:
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # Verifies inbound webhooks. Without it, live webhooks are rejected (400).
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
       - key: PAYPAL_ENV
         value: sandbox
-      # Return/cancel URLs used by the payer-approval flow (must be absolute).
-      - key: PAYPAL_RETURN_URL
-        value: https://trustee-arena.onrender.com/
-      - key: PAYPAL_CANCEL_URL
-        value: https://trustee-arena.onrender.com/
+      # --- Public URL. Must match the URL Render assigns to this service; if
+      #     Render gives a different host, update this value. The PayPal
+      #     return/cancel URLs derive from it (/v1/paypal/return and
+      #     /v1/paypal/cancel), so PAYPAL_RETURN_URL / PAYPAL_CANCEL_URL are
+      #     intentionally NOT set here.
+      - key: TRUSTEE_PUBLIC_URL
+        value: https://trustee-arena.onrender.com
+      # Gates principal registration and /resolve. Render generates it; read it
+      # from the Render dashboard when you need it, and never commit it.
+      - key: TRUSTEE_OPERATOR_TOKEN
+        generateValue: true
+      # TRUSTEE_WEBHOOK_ALLOW_UNVERIFIED is deliberately absent. Dev only.

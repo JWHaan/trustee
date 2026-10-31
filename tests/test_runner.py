@@ -57,11 +57,11 @@ def test_cheat_run_voids_and_refunds():
     assert result.state == "VOIDED", result.error
     assert result.ruling is not None
     assert result.ruling["decision"] == "release"
-    assert result.ruling["clause"] == "sha256 in manifest"
+    assert result.ruling["clause"] == "sha256 matches contract"
     assert result.attest is not None and result.attest["verdict"] == "reject"
-    # two independent criteria failed: hash and exported surface
+    # two independent criteria failed: the hash and the CSV schema
     assert result.attest["evidence"]["sha256_check"] == "mismatch"
-    assert "missing exports" in result.attest["evidence"]["checker"]
+    assert result.attest["evidence"]["checker"].startswith("failed: schema mismatch")
     assert result.escrow is not None and result.escrow["status"] == "voided"
 
 
