@@ -35,7 +35,8 @@ from ..ledger import Ledger
 from ..llm import LLM
 from ..network.app import NORTHWIND_MOUNT, TIDEWATER_MOUNT
 from ..network.common import Hop, Waiter
-from ..network.northwind import Northwind, Purchase
+from ..network.northwind import Northwind
+from ..network.remote import RemoteError, RemoteNetwork
 from ..network.tidewater import Tidewater
 from ..paypal import PayPalClient, PayPalError
 from .approval import ApprovalWait
@@ -62,6 +63,7 @@ class A2AFlow:
         northwind: Northwind,
         tidewater: Tidewater,
         demo_funding: Callable[[str], str | None] | None = None,
+        remote: RemoteNetwork | None = None,
     ):
         self.demo_funding = demo_funding
         self.scenario = scenario
@@ -76,6 +78,7 @@ class A2AFlow:
         self.wait = wait
         self.northwind = northwind
         self.tidewater = tidewater
+        self.remote = remote
         self._order_id = ""
         self._last_nudge = 0.0
         self._refused: str | None = None
@@ -141,6 +144,8 @@ class A2AFlow:
     # ------------------------------------------------------------------- run
 
     def run(self) -> OutsideResult:
+        if self.remote is not None:
+            return self._run_remote(self.remote)
         sc = self.scenario
         base = str(self.http.base_url).rstrip("/")
         waiter = Waiter(
@@ -193,30 +198,103 @@ class A2AFlow:
         )
         with self.tidewater.session(**seller_settings), self.northwind.session(**buyer_settings):
             purchase = self.northwind.buy(base + TIDEWATER_MOUNT, deal_id=self.deal_id)
-        return self._result(purchase)
+        return self._result(
+            purchase.contract.key_clauses() if purchase.contract is not None else None,
+            purchase.attest,
+            purchase.turns,
+            purchase.outcome,
+            self.northwind.identity.agent_id,
+            purchase.seller or self.tidewater.identity.agent_id,
+        )
 
-    def _result(self, purchase: Purchase) -> OutsideResult:
+    # ---------------------------------------------------------------- hosted agents
+
+    def _run_remote(self, remote: RemoteNetwork) -> OutsideResult:
+        """The same purchase with Northwind and Tidewater hosted elsewhere (Astropods).
+
+        The hosted Northwind is asked to buy through its operator route and followed by polling. What the tape shows:
+        the hops Northwind itself made (its calls to Tidewater and Trustee), the PayPal approval link, and Trustee's
+        own rows for the deal. Tidewater's side (its replies, the push it receives, the delivery it ships) is not
+        visible from here; the contract, the escrow and the ruling are, through Trustee. Which scenario the remote
+        agents play (prices, the cheating seller) is their own configuration, not this scenario's."""
+        self.ledger.append(
+            self.deal_id,
+            "arena",
+            "run",
+            event="a2a_network",
+            note=(
+                "Northwind and Tidewater are hosted A2A agents on their own servers; "
+                "the tape shows Northwind's calls and Trustee's rows, not Tidewater's side"
+            ),
+        )
+        deadline = time.monotonic() + self.wait.timeout_seconds + 60.0
+        seen_hops = 0
+        announced = False
+        status: dict[str, Any] = {}
+        failure: str | None = None
+        try:
+            remote.start(self.deal_id)
+            while True:
+                status = remote.status(self.deal_id)
+                hops = status.get("hops") or []
+                for hop in hops[seen_hops:]:
+                    self.ledger.append(
+                        self.deal_id,
+                        str(hop.get("caller", "")),
+                        "a2a",
+                        event=f"{hop.get('peer', '')} {hop.get('method', '')} {hop.get('skill', '')}",
+                        note=str(hop.get("note", "")),
+                        price=str(hop.get("price", "")),
+                    )
+                seen_hops = len(hops)
+                approval = status.get("approval")
+                if approval and not announced:
+                    announced = True
+                    self._on_approval(
+                        self.deal_id, str(approval.get("order_id", "")), str(approval.get("approve_url", ""))
+                    )
+                if status.get("state") in ("finished", "failed"):
+                    break
+                refused = self._nudge()
+                if refused is not None:
+                    failure = refused
+                    break
+                if time.monotonic() > deadline:
+                    failure = "the hosted Northwind did not finish in time"
+                    break
+                time.sleep(min(max(self.wait.poll_seconds, 0.01), POLL_CAP_SECONDS))
+        except RemoteError as exc:
+            failure = str(exc)
+        if failure is None and status.get("state") == "failed":
+            failure = str(status.get("error") or "the purchase failed")
+        if failure is not None:
+            self.ledger.append(self.deal_id, "arena", "run", event="remote_failed", note=failure)
+        return self._result(
+            status.get("contract"),
+            status.get("attest"),
+            int(status.get("turns") or 0),
+            failure or status.get("outcome"),
+            str(status.get("buyer") or "northwind"),
+            str(status.get("seller") or "tidewater"),
+        )
+
+    def _result(
+        self,
+        contract: dict[str, Any] | None,
+        attest: dict[str, Any] | None,
+        turns: int,
+        outcome: str | None,
+        buyer_id: str,
+        seller_id: str,
+    ) -> OutsideResult:
         client = TrusteeClient(str(self.http.base_url), http=self.http, operator_token=self.operator_token)
         try:
             view = client.get_deal(self.deal_id)
         except TrusteeError:
             # The deal never formed (a refused contract is not stored): report the negotiation's last state.
-            contract = purchase.contract
-            view = {
-                "state": "NEGOTIATING",
-                "contract": contract.key_clauses() if contract is not None else None,
-                "escrow": None,
-                "ruling": None,
-            }
+            view = {"state": "NEGOTIATING", "contract": contract, "escrow": None, "ruling": None}
         return attach_receipt(
-            OutsideResult(
-                view,
-                purchase.attest,
-                purchase.turns,
-                purchase.outcome,
-                self.northwind.identity.agent_id,
-                self.tidewater.identity.agent_id,
-            ),
+            OutsideResult(view, attest, turns, outcome, buyer_id, seller_id),
             client,
             self.ledger,
             self.deal_id,

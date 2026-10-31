@@ -1,0 +1,51 @@
+spec: blueprint/v1
+name: trustee-tidewater
+
+agent:
+  build:
+    context: ../../..
+    dockerfile: deploy/astropods/Dockerfile
+    args:
+      AGENT: tidewater
+  interfaces:
+    frontend: true # serves its own A2A surface (Agent Card and /a2a) on port 80
+    messaging: false
+  healthcheck:
+    path: /healthz
+  inputs:
+    - name: AGENT_PUBLIC_URL
+      datatype: string
+      description: Public https URL of this agent once deployed. Trustee pushes deal updates here.
+    - name: TRUSTEE_URL
+      datatype: string
+      description: Public base URL of Trustee, for example https://trustee-arena.onrender.com
+    - name: TRUSTEE_OPERATOR_TOKEN
+      datatype: string
+      secret: true
+      optional: true
+      description: Trustee's operator token, if Trustee has one set
+    - name: AGENT_IDENTITY_SECRET
+      datatype: string
+      secret: true
+      description: Stable identity secret from scripts/gen_agent_secret.py (a separate one per agent)
+    - name: TRUSTEE_MODE
+      datatype: string
+      default: auto
+      optional: true
+      display-as: select
+      options: [auto, live, scripted]
+      description: auto uses the AI Gateway model, else the recorded negotiation
+    - name: PAYPAL_SELLER_EMAIL
+      datatype: string
+      optional: true
+      description: PayPal sandbox business account that receives the payment
+    - name: TIDEWATER_CHEAT
+      datatype: string
+      default: "0"
+      optional: true
+      description: Set to 1 to ship the corrupt twin of the dataset (the cheating-seller demo)
+
+models:
+  default:
+    provider: gateway
+    models: [claude-sonnet-4-6, claude-haiku-4-5]
