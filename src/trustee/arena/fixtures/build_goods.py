@@ -27,6 +27,7 @@ GOODS = ROOT / "goods"
 SEED = 2026
 HONEST_NAME = "returns-2026q3.csv"
 JUNK_NAME = "returns-2026q3-junk.csv"
+PARTIAL_NAME = "returns-2026q3-partial.csv"
 HONEST_ROWS = 5000
 JUNK_ROWS = 312
 
@@ -93,16 +94,28 @@ def junk_bytes() -> bytes:
     return _csv_bytes(JUNK_COLUMNS, rows)
 
 
+def partial_bytes() -> bytes:
+    """5,000 rows like the honest file, but every tenth row has a blank refund_usd: 4,500 rows pass the
+    buyer's row checks and 500 fail. The seller commits to this file's hash; the buyer pays for valid rows."""
+    rows = _rows(random.Random(SEED), HONEST_ROWS)
+    for k in range(9, HONEST_ROWS, 10):
+        rows[k][6] = ""
+    return _csv_bytes(COLUMNS, rows)
+
+
 def main() -> None:
     GOODS.mkdir(parents=True, exist_ok=True)
     honest = honest_bytes()
     (GOODS / HONEST_NAME).write_bytes(honest)
     (GOODS / JUNK_NAME).write_bytes(junk_bytes())
+    partial = partial_bytes()
+    (GOODS / PARTIAL_NAME).write_bytes(partial)
     digest = hashlib.sha256(honest).hexdigest()
     manifest = {HONEST_NAME: digest}
     (ROOT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"{HONEST_NAME}  sha256={digest}  ({len(honest)} bytes, {HONEST_ROWS} rows)")
     print(f"{JUNK_NAME}  (corrupt twin, deliberately not in the manifest)")
+    print(f"{PARTIAL_NAME}  sha256={hashlib.sha256(partial).hexdigest()}  (4,500/5,000 rows valid; not in manifest)")
 
 
 if __name__ == "__main__":

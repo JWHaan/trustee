@@ -85,6 +85,7 @@ MAX_ROUNDS = 3  # buyer+seller exchanges after the opening offer
 
 Handler = Callable[[Event], None]
 Checker = Callable[[Path, str], "tuple[bool, str]"]
+UnitCounter = Callable[[Path, str], "tuple[int, int]"]
 
 
 # --------------------------------------------------------------------- results
@@ -107,9 +108,10 @@ class RunResult:
     error: str | None = None
     fallback_from: str | None = None
     outcome: str | None = None  # why a run ended short of a held escrow, e.g. "rejected_identity"
+    settlement: dict[str, Any] | None = None  # pro-rata settlement: captured, released, units
 
     def snapshot(self) -> dict[str, Any]:
-        return {
+        snap: dict[str, Any] = {
             "run_id": self.run_id,
             "deal_id": self.deal_id,
             "scenario": self.scenario,
@@ -126,6 +128,9 @@ class RunResult:
             "fallback_from": self.fallback_from,
             "outcome": self.outcome,
         }
+        if self.settlement is not None:
+            snap["settlement"] = self.settlement
+        return snap
 
 
 # ---------------------------------------------------------------------- runner
@@ -156,6 +161,7 @@ class DealRunner:
         self.mandates = mandates or MandateEngine(load_mandates())
         self.store = store or ArtifactStore.load(FIXTURES)
         self.checkers = checkers if checkers is not None else default_checkers()
+        self.counters = default_counters()
         # Only the `outside` flow uses these: an HTTP client for the arena's own /v1 API and the
         # platform's ledger, whose rows for the deal are copied onto the run's tape.
         self.self_client = self_client
@@ -279,6 +285,7 @@ class DealRunner:
             store=store,
             checkers=self.checkers,
             ledger=self.ledger,
+            counters=self.counters,
         )
         seller = SellerAgent(
             agent_id=SELLER_ID,
@@ -633,9 +640,10 @@ class DealRunner:
         # when the buyer accepts. Name both parties explicitly. The good is the
         # scenario's own spec, including its contract sha256, so an LLM-minted
         # good can never reach the contract.
-        return contract.model_copy(
-            update={"deal_id": deal_id, "buyer": BUYER_ID, "seller": SELLER_ID, "good": scenario.good}
-        )
+        update: dict[str, Any] = {"deal_id": deal_id, "buyer": BUYER_ID, "seller": SELLER_ID, "good": scenario.good}
+        if scenario.partial is not None:
+            update["partial"] = scenario.partial  # the pro-rata term is part of the scenario, signed with the contract
+        return contract.model_copy(update=update)
 
     # ---------------------------------------------------------------- helpers
 
@@ -701,6 +709,7 @@ class DealRunner:
             ),
             None,
         )
+        settled = self.ledger.tail(deal.deal_id, kinds=("settlement",))
         return RunResult(
             run_id=run_id,
             deal_id=deal.deal_id,
@@ -708,6 +717,9 @@ class DealRunner:
             mode=requested,
             effective_mode=effective,
             state=deal.state.value,
+            settlement=(
+                {k: v for k, v in settled[-1].payload.items() if k not in ("note", "price")} if settled else None
+            ),
             price=str(contract.price),
             contract=contract.key_clauses(),
             escrow=(
@@ -785,6 +797,10 @@ def default_checkers() -> dict[str, Checker]:
     return {"returns-dataset-2026q3": check_returns_dataset}
 
 
+def default_counters() -> dict[str, UnitCounter]:
+    return {"returns-dataset-2026q3": count_returns_units}
+
+
 def check_returns_dataset(artifact: Path, good_id: str) -> tuple[bool, str]:
     """Criteria 2 and 3, executed against the delivered bytes.
 
@@ -843,3 +859,45 @@ def check_returns_dataset(artifact: Path, good_id: str) -> tuple[bool, str]:
     if rows < RETURNS_MIN_ROWS:
         return False, f"failed: {rows} rows, need at least {RETURNS_MIN_ROWS}"
     return True, f"schema ok, {rows} rows"
+
+
+def count_returns_units(artifact: Path, good_id: str) -> tuple[int, int]:
+    """(valid rows, total rows) of a delivered returns CSV, by the same per-row rules as the checker.
+
+    A row is valid when it has the right field count, a non-blank order_id not seen on an earlier row,
+    a non-negative numeric refund_usd and ISO dates with return_date on or after order_date. A missing
+    or unreadable file, or a wrong header, counts zero valid rows.
+    """
+    import csv
+    import io
+    from datetime import date
+
+    try:
+        text = artifact.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0, 0
+    reader = csv.reader(io.StringIO(text, newline=""))
+    header = next(reader, None)
+    if header is None or tuple(header) != RETURNS_COLUMNS:
+        return 0, sum(1 for _ in reader)
+    seen: set[str] = set()
+    valid = total = 0
+    for row in reader:
+        total += 1
+        if len(row) != len(RETURNS_COLUMNS):
+            continue
+        rec = dict(zip(RETURNS_COLUMNS, row, strict=True))
+        order_id = rec["order_id"].strip()
+        if not order_id or order_id in seen:
+            continue
+        seen.add(order_id)
+        try:
+            refund = Decimal(rec["refund_usd"].strip())
+            ordered = date.fromisoformat(rec["order_date"])
+            returned = date.fromisoformat(rec["return_date"])
+        except (InvalidOperation, ValueError):
+            continue
+        if not refund.is_finite() or refund < 0 or returned < ordered:
+            continue
+        valid += 1
+    return valid, total

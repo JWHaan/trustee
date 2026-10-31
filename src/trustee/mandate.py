@@ -123,13 +123,16 @@ class MandateEngine:
         with self._lock:
             self._reserved.pop(contract.deal_id, None)
 
-    def commit(self, contract: Contract) -> None:
-        """Escrow captured: the reservation becomes spend."""
+    def commit(self, contract: Contract, amount: Decimal | None = None) -> None:
+        """Escrow captured: the reservation becomes spend.
+
+        A partial capture passes the amount that actually moved: only that is spent, and the rest
+        of the reservation goes back to the budget. `None` commits the full price, as before."""
         with self._lock:
             if contract.deal_id in self._spent:
                 return
             self._reserved.pop(contract.deal_id, None)
-            self._spent[contract.deal_id] = (contract.buyer, contract.price)
+            self._spent[contract.deal_id] = (contract.buyer, contract.price if amount is None else amount)
 
     # ---------------------------------------------------------------- checks
 

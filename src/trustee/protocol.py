@@ -82,6 +82,25 @@ class GoodSpec(BaseModel):
         return value
 
 
+class PartialTerms(BaseModel):
+    """Opt-in pro-rata settlement, agreed and signed by both parties inside the Contract.
+
+    When the buyer rejects a delivery whose evidence carries machine-checked counts
+    (`units_valid` of `units_total`), Trustee may capture `price * units_valid / units_total`
+    (rounded down to the cent) instead of voiding everything. It only does so when the valid
+    fraction is at least `min_fraction`; below that, the ordinary reject path applies.
+    """
+
+    basis: Literal["units"] = Field(default="units", description="What is counted. Only `units` (rows, items) exists.")
+    min_fraction: Decimal = Field(
+        gt=0,
+        le=1,
+        max_digits=5,
+        decimal_places=4,
+        description="Smallest valid fraction (0 < x <= 1) that still earns a pro-rata payment, e.g. 0.5.",
+    )
+
+
 class Offer(_Msg):
     kind: Literal["offer"] = "offer"
     good: GoodSpec
@@ -169,11 +188,20 @@ class Contract(BaseModel):
     signatures: dict[str, str] = Field(
         default_factory=dict, description="agent_id -> Ed25519 signature over digest() bytes"
     )
+    partial: PartialTerms | None = Field(
+        default=None,
+        description="Optional pro-rata settlement term. Absent means all-or-nothing, as before.",
+    )
 
     def digest(self) -> str:
         """sha256 hex of the agreed terms. Excludes `signatures` (they sign this) and
-        `transcript_ref` (a pointer, not a term), so signing never changes the digest."""
-        body = self.model_dump(mode="json", exclude={"signatures", "transcript_ref"})
+        `transcript_ref` (a pointer, not a term), so signing never changes the digest.
+        `partial` joins the signed body only when set, so a contract without it keeps the
+        exact digest (and so the signatures) it had before the term existed."""
+        exclude = {"signatures", "transcript_ref"}
+        if self.partial is None:
+            exclude.add("partial")
+        body = self.model_dump(mode="json", exclude=exclude)
         return hashlib.sha256(canonical_json(body)).hexdigest()
 
     def sign(self, agent_id: str, key: AgentKey) -> Contract:
@@ -200,6 +228,8 @@ class Contract(BaseModel):
         }
         if self.good.sha256 is not None:
             clauses["sha256"] = self.good.sha256
+        if self.partial is not None:
+            clauses["partial"] = f"{self.partial.basis}, min_fraction {self.partial.min_fraction}"
         return clauses
 
     @classmethod

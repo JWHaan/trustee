@@ -108,6 +108,12 @@ def receipt_data(snapshot: dict[str, Any], contract: dict[str, Any]) -> dict[str
     capture_id = details.get("capture_id") or (details.get("id") if snapshot["state"] == "SETTLED" else None)
     if capture_id:
         receipt["captureId"] = capture_id
+    settlement = snapshot.get("settlement")
+    if settlement and snapshot["state"] == "SETTLED":
+        receipt["amount"] = settlement["captured"]  # what actually moved
+        receipt["contractAmount"] = contract["price"]
+        receipt["released"] = settlement["released"]
+        receipt["settlement"] = settlement
     if details.get("void_reason") is not None and outcome(snapshot) == "refunded":
         receipt["voidReason"] = details["void_reason"]
     return {k: v for k, v in receipt.items() if v is not None}
@@ -145,6 +151,14 @@ def _status_text(state: TaskState, snapshot: dict[str, Any], contract: dict[str,
         return f"The buyer rejected the delivery and the dispute is open. Funds stay held.{clause}{tail}"
     if state == TaskState.COMPLETED:
         if deal == "SETTLED":
+            part = snapshot.get("settlement")
+            if part:
+                cur = contract["currency"]
+                return (
+                    f"Settled pro-rata: {part['captured']} {cur} of {part['price']} {cur} "
+                    f"({part['units_valid']} of {part['units_total']} {part['basis']} valid) was captured to seller "
+                    f"{contract['seller']}; {part['released']} {cur} went back to buyer {contract['buyer']}."
+                )
             return f"Settled: {amount} was captured to seller {contract['seller']}."
         return f"Refunded: the hold on {amount} was released; buyer {contract['buyer']} keeps the funds."
     if state == TaskState.CANCELED:
@@ -189,6 +203,8 @@ def deal_task(record: dict[str, Any], *, include_artifacts: bool = True) -> Task
         meta["needsAttention"] = snapshot["needs_attention"]
     if snapshot.get("dispute_deadline"):
         meta["disputeDeadline"] = snapshot["dispute_deadline"]
+    if snapshot.get("settlement"):
+        meta["settlement"] = snapshot["settlement"]
     task = Task(
         id=deal_id,
         contextId=deal_id,

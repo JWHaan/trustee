@@ -15,7 +15,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
-from ..protocol import GoodSpec
+from ..protocol import GoodSpec, PartialTerms
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -35,6 +35,7 @@ class Scenario:
     # "negotiated" (in-process agents) | "outside" (agents driving /v1 over HTTP) | "a2a" (agents on A2A servers)
     flow: str = "negotiated"
     agreed_price: Decimal | None = None  # outside flow: the price agreed off-platform
+    partial: PartialTerms | None = None  # pro-rata settlement term signed into the contract
 
     @property
     def opening_price(self) -> Decimal:
@@ -57,6 +58,7 @@ def _parse(raw: dict) -> Scenario:
         attack=raw.get("attack"),
         flow=raw.get("flow", "negotiated"),
         agreed_price=Decimal(str(raw["agreed_price"])) if raw.get("agreed_price") else None,
+        partial=PartialTerms.model_validate(raw["partial"]) if raw.get("partial") else None,
     )
 
 

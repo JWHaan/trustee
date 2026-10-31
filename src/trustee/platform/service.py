@@ -19,6 +19,7 @@ import re
 import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from ..agents.arbiter import Judge
@@ -116,7 +117,9 @@ class DealService:
         # Captured deals are spend: without this a restart would hand every budget back.
         for row in self.store.list_deals(states=[DealState.SETTLED.value], limit=1_000_000):
             if row["contract"] is not None:
-                self.mandates.commit(Contract.model_validate(row["contract"]))
+                settlement = (row["snapshot"] or {}).get("settlement")
+                captured = Decimal(settlement["captured"]) if settlement else None
+                self.mandates.commit(Contract.model_validate(row["contract"]), captured)
         for row in self.store.open_deals():
             self._load_row(row)
 
@@ -392,7 +395,7 @@ class DealService:
         snap = trustee.snapshot()
         escrow = snap["escrow"]
         ruling = snap["ruling"]
-        return {
+        view: dict[str, Any] = {
             "deal_id": contract.deal_id,
             "state": snap["state"],
             "contract": contract.key_clauses(),
@@ -417,6 +420,9 @@ class DealService:
             "needs_attention": snap.get("needs_attention"),
             "history": snap["history"],
         }
+        if snap.get("settlement"):  # pro-rata settlement: what was captured and what went back to the buyer
+            view["settlement"] = snap["settlement"]
+        return view
 
     def events(self, deal_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
         self._require(deal_id)

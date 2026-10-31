@@ -2,7 +2,8 @@
 
 Client-credentials REST against the sandbox:
   * Orders.create (intent=AUTHORIZE) -> authorize   = funds HELD, not moved
-  * Orders.capture                        = settle to seller
+  * Orders.capture                        = settle to seller (all of it, or a final partial amount)
+  * Authorizations.reauthorize            = renew the hold after the 3-day honor period
   * Orders.void                           = release the hold (refund)
 
 Design notes:
@@ -340,30 +341,87 @@ class PayPalClient:
             return False
         return bool(resp.json().get("verification_status") == "SUCCESS")
 
-    def capture(self, order: EscrowOrder, *, request_id: str | None = None) -> EscrowOrder:
+    def capture(
+        self,
+        order: EscrowOrder,
+        *,
+        amount: Decimal | None = None,
+        currency: str = "USD",
+        final_capture: bool = True,
+        request_id: str | None = None,
+    ) -> EscrowOrder:
         """Settle the held funds to the seller.
 
         For an AUTHORIZE-intent order the money lives on the *authorization*,
         so capture must go to `/v2/payments/authorizations/{id}/capture`.
         `/v2/checkout/orders/{id}/capture` is only valid for CAPTURE-intent
         orders and returns 422 here.
+
+        `amount=None` captures everything held, with the same empty request as always. With an
+        `amount`, only that much moves: the body carries the amount and `final_capture`. A final
+        partial capture closes the authorization and PayPal releases the rest of the hold to the
+        buyer; `final_capture=False` keeps it open for a further capture.
         """
+        body: dict[str, Any] | None = None
+        if amount is not None:
+            value = amount.quantize(Decimal("0.01"))
+            if value != amount or value <= 0:
+                raise ValueError(f"capture amount must be a positive whole-cent value, got {amount}")
+            body = {"amount": {"currency_code": currency, "value": str(value)}, "final_capture": final_capture}
         if self.dry_run:
             log.info("dry-run capture %s", order.order_id)
             order.status = "captured"
             order.details["capture_id"] = f"dry-cap-{uuid.uuid4().hex[:12]}"
+            if body is not None:
+                order.details["captured_amount"] = body["amount"]
+                order.details["final_capture"] = final_capture
             return order
         if not order.authorization_id:
             raise PayPalError("capture requires an authorization_id (order was never authorized)")
         resp = self._request_with_retry(
             "POST",
             f"{self.base_url}/v2/payments/authorizations/{order.authorization_id}/capture",
+            body,
             request_id=request_id,
         )
         if resp.status_code not in (200, 201):
             raise PayPalError(f"capture failed ({resp.status_code})", resp.status_code, resp.text[:500])
         order.status = "captured"
         order.details = resp.json()
+        return order
+
+    def reauthorize(self, order: EscrowOrder, *, request_id: str | None = None) -> EscrowOrder:
+        """Renew the hold after PayPal's 3-day honor period so the funds are checked again.
+
+        POST `/v2/payments/authorizations/{id}/reauthorize` is allowed from day 4 until day 29 of the
+        original authorization. PayPal answers with a NEW authorization id; every later capture and
+        void must use it, so this swaps it into the order. The old id is kept in `details`.
+        The 29-day validity still counts from the original authorization.
+        """
+        if self.dry_run:
+            old = order.authorization_id
+            order.authorization_id = f"dry-authz-{uuid.uuid4().hex[:12]}"
+            order.details["previous_authorization_id"] = old
+            order.details["reauthorizations"] = int(order.details.get("reauthorizations", 0)) + 1
+            log.info("dry-run reauthorize %s: %s -> %s", order.order_id, old, order.authorization_id)
+            return order
+        if not order.authorization_id:
+            raise PayPalError("reauthorize requires an authorization_id (order was never authorized)")
+        resp = self._request_with_retry(
+            "POST",
+            f"{self.base_url}/v2/payments/authorizations/{order.authorization_id}/reauthorize",
+            request_id=request_id,
+        )
+        if resp.status_code not in (200, 201):
+            raise PayPalError(f"reauthorize failed ({resp.status_code})", resp.status_code, resp.text[:500])
+        data = resp.json()
+        new_id = str(data.get("id") or "")
+        status = str(data.get("status") or "CREATED")
+        if not new_id or status not in ("CREATED", "PENDING"):
+            raise PayPalError(f"reauthorize returned no usable authorization (status {status})", resp.status_code)
+        order.details["previous_authorization_id"] = order.authorization_id
+        order.details["reauthorizations"] = int(order.details.get("reauthorizations", 0)) + 1
+        order.authorization_id = new_id
         return order
 
     def void(self, order: EscrowOrder, reason: str = "", *, request_id: str | None = None) -> EscrowOrder:

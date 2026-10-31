@@ -45,7 +45,7 @@ import httpx
 
 from ..a2a.client import A2AClient, artifact_data
 from ..a2a.models import TERMINAL_STATES, A2AError, Message, Task, TaskState
-from ..agents.buyer import ArtifactStore, BuyerAgent, Checker
+from ..agents.buyer import ArtifactStore, BuyerAgent, Checker, UnitCounter
 from ..identity import verify
 from ..ledger import Ledger
 from ..llm import LLM
@@ -146,6 +146,7 @@ class Northwind(NetworkAgent):
         budget: Decimal,
         llm: LLM,
         checkers: dict[str, Checker] | None = None,
+        counters: dict[str, UnitCounter] | None = None,
         trustee_url: str | None = None,
         operator_token: str | None = None,
         ledger: Ledger | None = None,
@@ -170,6 +171,7 @@ class Northwind(NetworkAgent):
         self.budget = budget
         self.llm = llm
         self.checkers = checkers or {}
+        self.counters = counters or {}
         self.trustee_url = trustee_url.rstrip("/") if trustee_url else None
         self.operator_token = operator_token
         self.ledger = ledger
@@ -539,6 +541,7 @@ class Northwind(NetworkAgent):
             self._store(deal_id),
             checkers=self.checkers,
             ledger=self.ledger,
+            counters=self.counters,
         )
 
 
@@ -547,7 +550,7 @@ class Northwind(NetworkAgent):
 
 def create_northwind(**overrides: Any) -> Northwind:
     """Northwind wanting the demo dataset on the honest scenario's budget; `overrides` replace any argument."""
-    from ..arena.runner import default_checkers
+    from ..arena.runner import default_checkers, default_counters
     from ..arena.scenario import get_scenario
     from .common import default_llm
 
@@ -557,6 +560,7 @@ def create_northwind(**overrides: Any) -> Northwind:
         "budget": scenario.budget,
         "llm": default_llm("auto"),
         "checkers": default_checkers(),
+        "counters": default_counters(),
     }
     settings.update(overrides)
     return Northwind(**settings)
