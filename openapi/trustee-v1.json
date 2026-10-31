@@ -419,6 +419,26 @@
             ],
             "title": "Max Amount"
           },
+          "max_counterparty_dispute_rate": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refuse a counterparty whose share of disputed deals exceeds this (0 to 1). Null means no rule.",
+            "examples": [
+              "0.10"
+            ],
+            "title": "Max Counterparty Dispute Rate"
+          },
           "max_total": {
             "anyOf": [
               {
@@ -436,6 +456,19 @@
               "1000.00"
             ],
             "title": "Max Total"
+          },
+          "min_counterparty_deals": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refuse a counterparty with fewer deals on record than this. Null means no rule.",
+            "title": "Min Counterparty Deals"
           },
           "notes": {
             "default": "",
@@ -954,6 +987,85 @@
           }
         },
         "summary": "Read a registered agent's public record",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/v1/agents/{agent_id}/reputation": {
+      "get": {
+        "description": "Counts over every deal the agent was buyer or seller of: deals, settled, voided, disputed, arbiter rulings lost (seller side), dispute rate and median delivery time. `source` says whether it was computed from the platform store (`local`) or from the Elastic ledger index (`elastic`).",
+        "operationId": "get_agent_reputation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No agent with this id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The reputation source (Elastic) did not answer."
+          }
+        },
+        "summary": "Read an agent's track record",
         "tags": [
           "Agents"
         ]

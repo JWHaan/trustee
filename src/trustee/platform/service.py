@@ -29,6 +29,7 @@ from ..llm import LLM
 from ..mandate import Mandate, MandateEngine, MandateReplay
 from ..paypal import PayPalClient
 from ..protocol import Attest, Contract, Delivery
+from ..reputation import LocalReputation, ReputationProvider
 from ..state import Deal, DealState, IllegalTransition
 from ..store import Store, StoreConflict
 from ..sweeper import DeadlineSweeper
@@ -68,6 +69,7 @@ class DealService:
         judge_factory: Callable[[], Judge] | None = None,
         sweeper: DeadlineSweeper | None = None,
         operator_token: str | None = None,
+        reputation: ReputationProvider | None = None,
     ):
         self.store = store
         self.paypal = paypal
@@ -78,7 +80,9 @@ class DealService:
         self.operator_token = operator_token or None
         self.registry = AgentRegistry()
         self.principals = PrincipalRegistry()
-        self.mandates = MandateEngine(principals=self.principals)
+        # Counterparty reputation rules in mandates read this; the local store is the default source.
+        self.reputation: ReputationProvider = reputation if reputation is not None else LocalReputation(store)
+        self.mandates = MandateEngine(principals=self.principals, reputation=self.reputation)
         self._deals: dict[str, tuple[Trustee, Contract]] = {}
         self._lock = threading.RLock()
         self._deal_locks: dict[str, threading.RLock] = {}

@@ -37,10 +37,15 @@ from pydantic import BaseModel
 
 from ..a2a import A2ABinding
 from ..alerts import AlertSink, arena_alerts_enabled, sink_from_env
+from ..elastic.config import arena_elastic_enabled
+from ..elastic.reputation import reputation_from_env
+from ..elastic.sink import ElasticSink
+from ..elastic.sink import sink_from_env as elastic_sink_from_env
 from ..ledger import Ledger
 from ..network import create_northwind, create_tidewater, mount_agents
 from ..paypal import PayPalClient
 from ..platform import DealService, build_router
+from ..platform.reputation_routes import build_reputation_router
 from ..platform.service import operator_token_from_env
 from ..store import Store
 from .rows import to_row
@@ -278,6 +283,8 @@ def create_app(
             await task
             for sink in app.state.alert_sinks:
                 sink.close()
+            for elastic_sink in app.state.elastic_sinks:
+                elastic_sink.close()
             app.state.a2a.close()
 
     app = FastAPI(title="Trustee Arena", version="0.1.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
@@ -305,6 +312,7 @@ def create_app(
             paypal,
             Ledger(),
             operator_token=operator_token_from_env(),
+            reputation=reputation_from_env(),
         )
     approvals = ApprovalRegistry()
     # The two A2A agents of the `a2a` scenario, with fresh keys. Each has its own Agent Card and /a2a endpoint,
@@ -333,6 +341,17 @@ def create_app(
             if arena_sink is not None:
                 arena_sink.attach(ledger)
                 alert_sinks.append(arena_sink)
+    # Optional Elastic copy of the ledger (ELASTICSEARCH_URL + ELASTIC_API_KEY). Same pattern as the alert sinks.
+    elastic_sinks: list[ElasticSink] = []
+    elastic_platform = elastic_sink_from_env("platform")
+    if elastic_platform is not None:
+        elastic_platform.attach(service.ledger)
+        elastic_sinks.append(elastic_platform)
+        if arena_elastic_enabled():  # demo runs stay out of the index unless asked for
+            elastic_arena = elastic_sink_from_env("arena")
+            if elastic_arena is not None:
+                elastic_arena.attach(ledger)
+                elastic_sinks.append(elastic_arena)
     registry = Registry()
     tasks: set[asyncio.Task[None]] = set()
 
@@ -343,7 +362,9 @@ def create_app(
     app.state.service = service
     app.state.approvals = approvals
     app.state.alert_sinks = alert_sinks
+    app.state.elastic_sinks = elastic_sinks
     app.include_router(build_router(service, approvals))
+    app.include_router(build_reputation_router(service))
     # A2A JSON-RPC (POST /a2a) over the same service; its push notifier follows the platform ledger.
     a2a = A2ABinding(service)
     app.state.a2a = a2a

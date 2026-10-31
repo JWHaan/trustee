@@ -338,7 +338,7 @@
                   "language": "json"
                 }
               },
-              "raw": "{\n  \"agent_id\": \"demo-buyer-agent\",\n  \"allowed_categories\": null,\n  \"allowed_counterparties\": null,\n  \"grants\": \"spend\",\n  \"max_amount\": \"250.00\",\n  \"max_total\": \"1000.00\",\n  \"notes\": \"demo-only mandate\",\n  \"principal\": \"demo-buyer-org\",\n  \"principal_signature\": \"S27_toxjk6IrDSv4NlkSmkkWLkE5g1UgSxe38IDXi7uTO8gB46owp5Tg3PuOG5GtLYn45RFR2LDULJ_gFdDKDw==\",\n  \"revoked\": false,\n  \"valid_until\": \"2027-12-31T23:59:00\",\n  \"version\": 1\n}"
+              "raw": "{\n  \"agent_id\": \"demo-buyer-agent\",\n  \"allowed_categories\": null,\n  \"allowed_counterparties\": null,\n  \"grants\": \"spend\",\n  \"max_amount\": \"250.00\",\n  \"max_counterparty_dispute_rate\": null,\n  \"max_total\": \"1000.00\",\n  \"min_counterparty_deals\": null,\n  \"notes\": \"demo-only mandate\",\n  \"principal\": \"demo-buyer-org\",\n  \"principal_signature\": \"S27_toxjk6IrDSv4NlkSmkkWLkE5g1UgSxe38IDXi7uTO8gB46owp5Tg3PuOG5GtLYn45RFR2LDULJ_gFdDKDw==\",\n  \"revoked\": false,\n  \"valid_until\": \"2027-12-31T23:59:00\",\n  \"version\": 1\n}"
             },
             "description": "Caps the buyer at 250 per deal and 1000 in total. Publishing the identical mandate again is idempotent (201). Only a different mandate at the same or an older version is a 409 replay.",
             "header": [
@@ -387,7 +387,7 @@
                   "language": "json"
                 }
               },
-              "raw": "{\n  \"agent_id\": \"demo-seller-agent\",\n  \"allowed_categories\": null,\n  \"allowed_counterparties\": null,\n  \"grants\": \"receive\",\n  \"max_amount\": \"250.00\",\n  \"max_total\": null,\n  \"notes\": \"demo-only mandate\",\n  \"principal\": \"demo-seller-org\",\n  \"principal_signature\": \"XPhzUU6EVC-ELqmDgbjTGorMFeMfc-5sPzmXQotTg2zXffB9ESsFldNSEWjC4M0uroC1HYBcn4KbkABvSi2OAA==\",\n  \"revoked\": false,\n  \"valid_until\": \"2027-12-31T23:59:00\",\n  \"version\": 1\n}"
+              "raw": "{\n  \"agent_id\": \"demo-seller-agent\",\n  \"allowed_categories\": null,\n  \"allowed_counterparties\": null,\n  \"grants\": \"receive\",\n  \"max_amount\": \"250.00\",\n  \"max_counterparty_dispute_rate\": null,\n  \"max_total\": null,\n  \"min_counterparty_deals\": null,\n  \"notes\": \"demo-only mandate\",\n  \"principal\": \"demo-seller-org\",\n  \"principal_signature\": \"XPhzUU6EVC-ELqmDgbjTGorMFeMfc-5sPzmXQotTg2zXffB9ESsFldNSEWjC4M0uroC1HYBcn4KbkABvSi2OAA==\",\n  \"revoked\": false,\n  \"valid_until\": \"2027-12-31T23:59:00\",\n  \"version\": 1\n}"
             },
             "description": "The seller may receive payment. The gate needs a receive mandate on each side.",
             "header": [

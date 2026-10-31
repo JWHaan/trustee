@@ -12,9 +12,16 @@ import threading
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from .identity import AgentKey, PrincipalRegistry, canonical_json
 from .protocol import Contract
+
+if TYPE_CHECKING:
+    from .reputation import Reputation, ReputationProvider
+
+
+_SIGNED_WHEN_SET = frozenset({"min_counterparty_deals", "max_counterparty_dispute_rate"})
 
 
 @dataclass(frozen=True)
@@ -31,10 +38,18 @@ class Mandate:
     max_total: Decimal | None = None  # cumulative budget across deals (spend side); None = unbounded
     revoked: bool = False
     version: int = 0  # strictly increases per agent; stops a replay of an older signed mandate
+    # Reputation rules about the *other* party of a deal; None = no rule. They need a reputation provider.
+    min_counterparty_deals: int | None = None
+    max_counterparty_dispute_rate: Decimal | None = None
 
     def signing_bytes(self) -> bytes:
-        """Canonical bytes of every field except the signature itself."""
-        body = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "principal_signature"}
+        """Canonical bytes of every field except the signature itself. Optional fields added after the first
+        release are signed only when set, so a mandate signed before they existed still verifies."""
+        body = {
+            f.name: getattr(self, f.name)
+            for f in fields(self)
+            if f.name != "principal_signature" and not (f.name in _SIGNED_WHEN_SET and getattr(self, f.name) is None)
+        }
         return canonical_json(body)
 
     def sign(self, key: AgentKey) -> Mandate:
@@ -50,9 +65,12 @@ class MandateReplay(ValueError):
 class MandateReport:
     ok: bool
     violations: list[str] = field(default_factory=list)
+    checks: list[str] = field(default_factory=list)  # optional rules that passed, so the tape shows them
 
     def summarize(self) -> str:
-        return "mandates OK" if self.ok else "; ".join(self.violations)
+        if not self.ok:
+            return "; ".join(self.violations)
+        return "; ".join(["mandates OK", *self.checks])
 
 
 class MandateEngine:
@@ -70,9 +88,11 @@ class MandateEngine:
         self,
         mandates: dict[str, Mandate] | None = None,
         principals: PrincipalRegistry | None = None,
+        reputation: ReputationProvider | None = None,
     ):
         self._mandates: dict[str, Mandate] = dict(mandates or {})
         self.principals = principals
+        self.reputation = reputation  # needed only by mandates with counterparty reputation rules
         self._revoked: set[str] = set()
         self._reserved: dict[str, tuple[str, Decimal]] = {}  # deal_id -> (buyer, price)
         self._spent: dict[str, tuple[str, Decimal]] = {}
@@ -133,10 +153,18 @@ class MandateEngine:
 
     # ---------------------------------------------------------------- checks
 
-    def check_deal(self, contract: Contract, now: datetime | None = None) -> MandateReport:
-        """Both parties must hold a valid, matching mandate for this contract."""
+    def check_deal(
+        self, contract: Contract, now: datetime | None = None, *, reputation_rules: bool = True
+    ) -> MandateReport:
+        """Both parties must hold a valid, matching mandate for this contract.
+
+        `reputation_rules=False` skips the counterparty reputation rules: they gate *entering* a deal, and a
+        counterparty's record drifting afterwards must not strand funds that are already held."""
         now = now or datetime.now()
         violations: list[str] = []
+        checks: list[str] = []
+        # Reputation may be an HTTP call, so fetch it before taking the lock.
+        looked_up = self._lookup_reputations(contract) if reputation_rules else {}
         with self._lock:
             for side, grant in (("buyer", "spend"), ("seller", "receive")):
                 agent_id = getattr(contract, side)
@@ -167,13 +195,73 @@ class MandateEngine:
                 counterparties = getattr(contract, ("seller" if side == "buyer" else "buyer"))
                 if m.allowed_counterparties and counterparties not in m.allowed_counterparties:
                     violations.append(f"{agent_id}: counterparty '{counterparties}' not allowlisted")
-        return MandateReport(ok=not violations, violations=violations)
+                if reputation_rules:
+                    self._check_reputation(
+                        agent_id, m, counterparties, looked_up.get(counterparties), violations, checks
+                    )
+        return MandateReport(ok=not violations, violations=violations, checks=checks)
+
+    def _lookup_reputations(self, contract: Contract) -> dict[str, Reputation | str]:
+        """Reputation of each counterparty whose partner's mandate sets a rule; an error string on failure."""
+        found: dict[str, Reputation | str] = {}
+        for side, other in (("buyer", "seller"), ("seller", "buyer")):
+            m = self._mandates.get(getattr(contract, side))
+            if m is None or (m.min_counterparty_deals is None and m.max_counterparty_dispute_rate is None):
+                continue
+            counterparty = getattr(contract, other)
+            if counterparty in found or self.reputation is None:
+                continue
+            try:
+                found[counterparty] = self.reputation.reputation(counterparty, exclude_deal=contract.deal_id)
+            except Exception as exc:  # noqa: BLE001 - an unreadable reputation must fail closed, not crash the gate
+                found[counterparty] = f"lookup failed ({type(exc).__name__})"
+        return found
+
+    def _check_reputation(
+        self,
+        agent_id: str,
+        m: Mandate,
+        counterparty: str,
+        rep: Reputation | str | None,
+        violations: list[str],
+        checks: list[str],
+    ) -> None:
+        if m.min_counterparty_deals is None and m.max_counterparty_dispute_rate is None:
+            return
+        if self.reputation is None:
+            violations.append(
+                f"{agent_id}: mandate sets counterparty reputation rules but no reputation source is configured"
+            )
+            return
+        if rep is None or isinstance(rep, str):
+            violations.append(f"{agent_id}: counterparty '{counterparty}' reputation unavailable ({rep or 'no data'})")
+            return
+        if m.min_counterparty_deals is not None:
+            if rep.deals_total < m.min_counterparty_deals:
+                violations.append(
+                    f"{agent_id}: counterparty '{counterparty}' has {rep.deals_total} deals, "
+                    f"mandate needs at least {m.min_counterparty_deals}"
+                )
+            else:
+                checks.append(
+                    f"{agent_id}: counterparty '{counterparty}' deals {rep.deals_total} >= {m.min_counterparty_deals}"
+                )
+        if m.max_counterparty_dispute_rate is not None:
+            rate = Decimal(str(rep.dispute_rate))
+            if rate > m.max_counterparty_dispute_rate:
+                violations.append(
+                    f"{agent_id}: counterparty '{counterparty}' dispute rate {rate} "
+                    f"exceeds mandate cap {m.max_counterparty_dispute_rate}"
+                )
+            else:
+                cap = m.max_counterparty_dispute_rate
+                checks.append(f"{agent_id}: counterparty '{counterparty}' dispute rate {rate} <= {cap}")
 
     def recheck(self, contract: Contract, now: datetime | None = None) -> MandateReport:
         """The gate again, at the moment before capture: authority can lapse
         (expiry, revocation, budget spent elsewhere) between escrow and settlement.
         The deal's own reservation is not counted against itself."""
-        return self.check_deal(contract, now)
+        return self.check_deal(contract, now, reputation_rules=False)
 
 
 def demo_mandates(buyer: str = "buyer-agent-1", seller: str = "seller-agent-1") -> dict[str, Mandate]:
