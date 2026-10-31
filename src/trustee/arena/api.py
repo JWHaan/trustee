@@ -35,6 +35,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..a2a import A2ABinding
 from ..alerts import AlertSink, arena_alerts_enabled, sink_from_env
 from ..ledger import Ledger
 from ..paypal import PayPalClient
@@ -276,6 +277,7 @@ def create_app(
             await task
             for sink in app.state.alert_sinks:
                 sink.close()
+            app.state.a2a.close()
 
     app = FastAPI(title="Trustee Arena", version="0.1.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 
@@ -336,6 +338,10 @@ def create_app(
     app.state.approvals = approvals
     app.state.alert_sinks = alert_sinks
     app.include_router(build_router(service, approvals))
+    # A2A JSON-RPC (POST /a2a) over the same service; its push notifier follows the platform ledger.
+    a2a = A2ABinding(service)
+    app.state.a2a = a2a
+    app.include_router(a2a.router)
 
     # ---------------------------------------------------------------- routes
 

@@ -415,13 +415,19 @@ def test_agent_card_fields_and_skills(world: World, monkeypatch):
             "preferredTransport",
         ):
             assert field in card, field
-        assert card["preferredTransport"] == "HTTP+JSON"
-        assert card["url"] == "http://testserver/v1"
+        # The A2A JSON-RPC binding (POST /a2a) is the preferred interface; /v1 stays listed as the REST one.
+        assert card["preferredTransport"] == "JSONRPC"
+        assert card["url"] == "http://testserver/a2a"
         assert card["supportedInterfaces"][0]["url"] == card["url"]
-        assert card["capabilities"]["streaming"] is False and card["capabilities"]["pushNotifications"] is False
+        assert {"url": "http://testserver/v1", "protocolBinding": "HTTP+JSON", "protocolVersion": "0.3"} in card[
+            "supportedInterfaces"
+        ]
+        assert card["capabilities"]["streaming"] is False and card["capabilities"]["pushNotifications"] is True
         assert {s["id"] for s in card["skills"]} == {
+            "register-principal",
             "register-agent",
             "publish-mandate",
+            "revoke-mandate",
             "open-escrow",
             "record-delivery",
             "attest-delivery",
@@ -434,7 +440,9 @@ def test_agent_card_fields_and_skills(world: World, monkeypatch):
 
 def test_agent_card_url_comes_from_env(world: World, monkeypatch):
     monkeypatch.setenv("TRUSTEE_PUBLIC_URL", "https://trustee.example.com/")
-    assert world.http.get("/.well-known/agent.json").json()["url"] == "https://trustee.example.com/v1"
+    card = world.http.get("/.well-known/agent.json").json()
+    assert card["url"] == "https://trustee.example.com/a2a"
+    assert card["additionalInterfaces"][1]["url"] == "https://trustee.example.com/v1"
 
 
 def test_healthz_reports_store_and_existing_routes_still_work(world: World):

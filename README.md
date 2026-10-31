@@ -123,7 +123,8 @@ use. Every mutating call is signed, so it is attributable to a key.
 
 | Endpoint | Who signs | Purpose |
 |---|---|---|
-| `GET /.well-known/agent.json` (also `agent-card.json`) | n/a | A2A Agent Card: skills, signing scheme |
+| `GET /.well-known/agent.json` (also `agent-card.json`) | n/a | A2A Agent Card: skills, interfaces, signing scheme |
+| `POST /a2a` | the signed payloads inside | A2A JSON-RPC: the same operations as skills, deals as tasks, push notifications ([A2A](#a2a-json-rpc-and-push-notifications)) |
 | `POST /v1/principals` | principal key (proof of possession) | register a principal (the human/company behind agents) |
 | `POST /v1/agents` | agent key + principal | register an agent; the principal vouches for it |
 | `POST /v1/mandates`, `POST /v1/mandates/{agent_id}/revoke` | principal | publish / revoke a spend or receive mandate |
@@ -200,14 +201,45 @@ python examples/sandbox_poc.py --settle      # or --refund; open the printed app
 python examples/sandbox_poc.py --dry-run     # same steps with no network or credentials
 ```
 
-Not implemented from A2A: the JSON-RPC / `message:send` binding, tasks, streaming and push notifications.
-Only discovery (the Agent Card) and a plain HTTP+JSON API are provided.
+### A2A: JSON-RPC and push notifications
+
+Trustee implements the Agent2Agent protocol **spec 1.0.0, JSON-RPC binding** at `POST /a2a`, so any A2A agent can use
+it as its escrow service and be told when money moves instead of polling. Full reference: [docs/A2A.md](docs/A2A.md).
+
+- **Skills.** `SendMessage` with one DataPart `{"skill": "open-escrow", "input": {...}}` runs the same operation as the
+  matching REST call, with the same signed payload: `register-principal`, `register-agent`, `publish-mandate`,
+  `revoke-mandate`, `open-escrow`, `record-delivery`, `attest-delivery`, `get-deal`. A text-only message gets a help
+  message listing them. The Ed25519 signatures inside the payloads authorize every change; A2A is only the transport.
+- **A deal is a task** (`taskId = deal_id`), rebuilt from the durable deal on every `GetTask`, so it survives restarts:
+  `AUTH_REQUIRED` (payer must approve at PayPal) -> `INPUT_REQUIRED` (funds held, seller must deliver) -> `WORKING`
+  (delivered, buyer verifying; also disputes) -> `COMPLETED` with a `settlement-receipt` artifact (captured or
+  refunded). A payer-cancelled deal is `CANCELED`; a refused contract is `REJECTED`.
+  `ListTasks` and `CancelTask` (only before the payer approves, no PayPal call) are supported.
+- **Push.** `CreateTaskPushNotificationConfig` (or `configuration.taskPushNotificationConfig` in `SendMessage`) makes
+  Trustee `POST {"task": ...}` to your webhook on every state change, with your token in `X-A2A-Notification-Token`:
+  a seller learns "funds are held, ship now" without polling. Delivery runs on a background worker with retries and
+  never blocks the money path. URLs must be https (127.0.0.1/localhost allowed); configs are stored in SQLite.
+- **Client.** `trustee.a2a.A2AClient` is a generic JSON-RPC A2A client (`fetch_card`, `send_message`, `call_skill`,
+  `get_task`, `list_tasks`, `cancel_task`, `set_push_config`), usable against any A2A agent.
+- **Also accepted:** the v0.3 method names (`message/send`, `tasks/get`, ...), answered in the v0.3 shape.
+- **Not implemented:** streaming (`SendStreamingMessage`, `SubscribeToTask`), the authenticated extended card, the gRPC and
+  HTTP+JSON A2A bindings, task `history`, tenants, Agent Card signatures. Trustee's `/v1` REST API is listed in the card
+  but is not the A2A HTTP+JSON binding.
+
+Call it from Python:
+
+```python
+from trustee.a2a import A2AClient
+c = A2AClient("http://127.0.0.1:8000")
+task = c.call_skill("open-escrow", signed_contract_dict)   # then record-delivery / attest-delivery with task_id=task.id
+```
 
 ### SDKs and Postman
 
-- **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route and `/.well-known` route. Regenerate it with
+- **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route, every `/.well-known` route and the `/a2a` endpoint. Regenerate it with
   `python scripts/export_openapi.py` after an API change. `tests/test_openapi.py` fails when the file is stale.
-- **Postman.** `postman/Trustee.postman_collection.json` runs the honest deal and three refusals end to end.
+- **Postman.** `postman/Trustee.postman_collection.json` runs the honest deal and three refusals end to end, then the same
+  deal over A2A (folder 4).
   Import it with the environment file in the same folder. Its signed bodies use public demo keys, so do not
   point it at a server that holds money.
 - **Generated SDKs.** The `sdks` workflow builds Python and TypeScript SDKs with APIMatic. It needs the
@@ -227,6 +259,7 @@ src/trustee/
   llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama)
   agents/            trustee, buyer, seller, arbiter
   platform/          public /v1 API, A2A Agent Card, DealService (durable multi-deal host)
+  a2a/               A2A JSON-RPC server + client, skills, deal tasks, push notifications
   client.py          TrusteeClient SDK
   arena/
     runner.py        DealRunner — composes one deal, emits the tape
@@ -236,8 +269,8 @@ src/trustee/
     rows.py          ledger Event -> grid row
     fixtures/        goods store, manifest, scenarios, transcripts, CLI runners
 arena/ui/            Vite + React + AG Grid Community
-tests/               259 tests: agents, runner, API, SSE, PayPal request shapes, money path,
-                     identity, mandates, store, platform API, approval, webhooks, arena scenarios
+tests/               340+ tests: agents, runner, API, SSE, PayPal request shapes, money path,
+                     identity, mandates, store, platform API, approval, webhooks, A2A, arena scenarios
 ```
 
 ## Configuration

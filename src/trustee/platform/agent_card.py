@@ -1,9 +1,13 @@
 """A2A Agent Card — how another agent discovers what Trustee does and how to talk to it.
 
-Field names follow the current A2A specification (`supportedInterfaces`, `securityRequirements`)
-and, side by side, the v0.3 names (`protocolVersion`, `url`, `preferredTransport`, `security`) so
-clients written against either generation can read the card. Only the Agent Card and a plain
-HTTP+JSON surface are implemented; see the README for what is not.
+Field names follow the current A2A specification (1.0: `supportedInterfaces`, `securityRequirements`)
+and, side by side, the v0.3 names (`protocolVersion`, `url`, `preferredTransport`, `additionalInterfaces`,
+`security`) so clients written against either generation can read the card.
+
+Two interfaces are listed. The JSON-RPC binding at `/a2a` is the A2A one (`trustee.a2a`), listed first so a
+client that takes "the first entry" gets the protocol it expects. Trustee's own REST API at `/v1` is listed
+second as `HTTP+JSON`; it is *not* the A2A HTTP+JSON binding (no `message:send`), it is the same service
+with its own paths, described by `openapi/trustee-v1.json`. Streaming is not supported; push notifications are.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ def _skill(skill_id: str, name: str, description: str, tags: list[str], examples
     return {
         "id": skill_id,
         "name": name,
-        "description": description,
+        "description": f'{description} A2A: SendMessage with one DataPart {{"skill": "{skill_id}", "input": {{...}}}}.',
         "tags": tags,
         "examples": examples,
         "inputModes": ["application/json"],
@@ -38,10 +42,17 @@ def _skill(skill_id: str, name: str, description: str, tags: list[str], examples
 
 SKILLS: list[dict[str, Any]] = [
     _skill(
+        "register-principal",
+        "Register a principal",
+        "POST /v1/principals: bind a principal name (the human or company that owns agents) to its Ed25519 key. "
+        "The principal proves possession by signing {principal, public_key}.",
+        ["identity", "registration"],
+        ["Register principal acme with this public key"],
+    ),
+    _skill(
         "register-agent",
         "Register an agent",
-        "POST /v1/principals then POST /v1/agents: bind an Ed25519 key to an agent id under a principal "
-        "that vouches for it.",
+        "POST /v1/agents: bind an Ed25519 key to an agent id under a principal that vouches for it.",
         ["identity", "registration"],
         ["Register buyer-agent-1 under principal acme with role buyer"],
     ),
@@ -49,15 +60,24 @@ SKILLS: list[dict[str, Any]] = [
         "publish-mandate",
         "Publish a spending mandate",
         "POST /v1/mandates: a principal-signed limit (cap, categories, counterparties, expiry, total budget) "
-        "for one agent. POST /v1/mandates/{agent_id}/revoke withdraws it.",
+        "for one agent.",
         ["mandate", "authorization"],
         ["Allow buyer-agent-1 to spend up to 100 USD on code from seller-agent-1"],
+    ),
+    _skill(
+        "revoke-mandate",
+        "Revoke a mandate",
+        "POST /v1/mandates/{agent_id}/revoke: the principal signs {revoke: agent_id}. Permanent for that agent id.",
+        ["mandate", "authorization"],
+        ["Revoke the mandate of buyer-agent-1"],
     ),
     _skill(
         "open-escrow",
         "Open an escrow",
         "POST /v1/deals with a contract signed by both parties. Both mandates are checked, then PayPal funds "
-        "are held (not moved). Idempotent on deal_id.",
+        "are held (not moved). Idempotent on deal_id. Returns the deal as a task (taskId = deal_id): "
+        "AUTH_REQUIRED until the payer approves at PayPal, INPUT_REQUIRED while funds are held and the seller "
+        "must deliver, COMPLETED with a settlement-receipt artifact when captured or refunded.",
         ["escrow", "paypal", "payments"],
         ["Escrow 25.00 USD for deal deal_ab12 once both agents signed the contract"],
     ),
@@ -79,36 +99,57 @@ SKILLS: list[dict[str, Any]] = [
     _skill(
         "get-deal",
         "Get deal state",
-        "GET /v1/deals/{id} for state, escrow and ruling; GET /v1/deals/{id}/events for the persisted ledger.",
+        "GET /v1/deals/{id} for state, escrow and ruling; GET /v1/deals/{id}/events for the persisted ledger. "
+        "Over A2A the same view is GetTask.",
         ["status", "audit"],
         ["What is the state of deal deal_ab12?"],
     ),
 ]
 
 
+A2A_NOTE = (
+    " A2A: JSON-RPC at /a2a. A deal is a task whose id is the deal id; register a push notification webhook on it "
+    "to be told when funds are held or released. A2A is only the transport: the signatures inside each payload "
+    "authorize every change."
+)
+
+_ED25519_SCHEME_DESCRIPTION = SIGNING_SCHEME
+_OPERATOR_SCHEME_DESCRIPTION = (
+    "Operator token for POST /v1/deals/{id}/resolve (and registration when configured). Over A2A it is the HTTP "
+    "Authorization header of the /a2a request, used for register-principal and for listing every task."
+)
+
+
 def build_agent_card(base_url: str) -> dict[str, Any]:
     base = base_url.rstrip("/")
     api = f"{base}/v1"
+    rpc = f"{base}/a2a"
     return {
         "name": "Trustee",
         "description": (
             "Escrow and arbitration for agent-to-agent payments on PayPal. Two agents sign a contract, Trustee "
             "checks both mandates, holds the buyer's funds with a PayPal authorization, and captures or voids "
-            "them from the buyer's signed attestation, a deadline, or an arbiter's ruling. " + SIGNING_SCHEME
+            "them from the buyer's signed attestation, a deadline, or an arbiter's ruling. " + SIGNING_SCHEME + A2A_NOTE
         ),
         "version": VERSION,
         "provider": {"organization": "Trustee", "url": base},
         "documentationUrl": f"{base}/api/docs",
-        # Current spec
-        "supportedInterfaces": [{"url": api, "protocolBinding": "HTTP+JSON", "protocolVersion": "0.3"}],
-        # v0.3 compatibility
+        # Current spec (1.0): the first entry is the preferred one.
+        "supportedInterfaces": [
+            {"url": rpc, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+            {"url": api, "protocolBinding": "HTTP+JSON", "protocolVersion": "0.3"},
+        ],
+        # v0.3 compatibility: the same two interfaces in the old field names.
         "protocolVersion": "0.3.0",
-        "url": api,
-        "preferredTransport": "HTTP+JSON",
-        "additionalInterfaces": [{"url": api, "transport": "HTTP+JSON"}],
+        "url": rpc,
+        "preferredTransport": "JSONRPC",
+        "additionalInterfaces": [
+            {"url": rpc, "transport": "JSONRPC"},
+            {"url": api, "transport": "HTTP+JSON"},
+        ],
         "capabilities": {
             "streaming": False,
-            "pushNotifications": False,
+            "pushNotifications": True,
             "extensions": [
                 {
                     "uri": "https://github.com/trustee/ext/ed25519-signed-messages/v1",
@@ -117,19 +158,25 @@ def build_agent_card(base_url: str) -> dict[str, Any]:
                 }
             ],
         },
+        # Each scheme carries the 1.0 shape (httpAuthSecurityScheme) and the v0.3 shape (type / scheme).
         "securitySchemes": {
             "ed25519Signature": {
+                "httpAuthSecurityScheme": {
+                    "scheme": "ed25519-signature",
+                    "description": _ED25519_SCHEME_DESCRIPTION,
+                },
                 "type": "http",
                 "scheme": "ed25519-signature",
-                "description": SIGNING_SCHEME,
+                "description": _ED25519_SCHEME_DESCRIPTION,
             },
             "operatorBearer": {
+                "httpAuthSecurityScheme": {"scheme": "Bearer", "description": _OPERATOR_SCHEME_DESCRIPTION},
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Operator token for POST /v1/deals/{id}/resolve (and registration when configured).",
+                "description": _OPERATOR_SCHEME_DESCRIPTION,
             },
         },
-        "securityRequirements": [{"ed25519Signature": []}],
+        "securityRequirements": [{"schemes": {"ed25519Signature": {"list": []}}}],
         "security": [{"ed25519Signature": []}],
         "defaultInputModes": ["application/json"],
         "defaultOutputModes": ["application/json"],

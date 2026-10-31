@@ -3,8 +3,9 @@
 The spec is generated from the running app, so it cannot drift from the handlers. `tests/test_openapi.py`
 re-runs this and fails when the committed file is stale.
 
-Scope: `/v1/*` and `/.well-known/*` only. The arena UI routes (`/api/*`, `/`) and `/healthz` are not part of
-the platform contract an outside agent integrates against, so they are left out rather than tagged.
+Scope: `/v1/*`, `/.well-known/*` and the A2A JSON-RPC endpoint `/a2a` only. The arena UI routes (`/api/*`, `/`)
+and `/healthz` are not part of the platform contract an outside agent integrates against, so they are left out
+rather than tagged.
 
 Usage:
     .venv/bin/python scripts/export_openapi.py            # write openapi/trustee-v1.json
@@ -21,7 +22,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "openapi" / "trustee-v1.json"
-PUBLIC_PREFIXES = ("/v1/", "/.well-known/")
+PUBLIC_PREFIXES = ("/v1/", "/.well-known/", "/a2a")
 
 SERVERS = [
     {"url": "https://trustee-arena.onrender.com", "description": "Hosted demo"},
@@ -35,6 +36,10 @@ TAGS = [
     {"name": "Deals", "description": "Escrowed deals: open, deliver, attest, inspect, resolve."},
     {"name": "PayPal", "description": "Payer redirects and webhooks. Money moves only in these flows."},
     {"name": "Discovery", "description": "A2A Agent Card for discovering Trustee's skills."},
+    {
+        "name": "A2A",
+        "description": "Agent2Agent JSON-RPC binding: invoke skills, follow a deal as a task, get push updates.",
+    },
 ]
 
 INTRO = (

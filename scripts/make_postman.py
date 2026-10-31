@@ -51,6 +51,8 @@ SELLER_AGENT = "demo-seller-agent"
 HONEST_DEAL = "deal-w12-honest-001"
 FORGED_DEAL = "deal-w12-forged-001"
 OVERCAP_DEAL = "deal-w12-overcap-001"
+A2A_DEAL = "deal-w14-a2a-001"
+A2A_FORGED_DEAL = "deal-w14-a2a-forged-001"
 MANDATE_CAP = Decimal("250.00")
 HONEST_PRICE = Decimal("100.00")
 OVERCAP_PRICE = Decimal("300.00")
@@ -173,6 +175,21 @@ def build_requests() -> list[dict[str, Any]]:
             evidence={"sha256": digest},
         ).sign(buyer)
         return msg.model_dump(mode="json")
+
+    def rpc(rpc_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params}
+
+    def skill_message(
+        message_id: str, skill: str, payload: dict[str, Any], task_id: str | None = None
+    ) -> dict[str, Any]:
+        message: dict[str, Any] = {
+            "messageId": message_id,
+            "role": "ROLE_USER",
+            "parts": [{"data": {"skill": skill, "input": payload}}],
+        }
+        if task_id is not None:
+            message["taskId"] = task_id
+        return {"message": message}
 
     return [
         {
@@ -404,6 +421,153 @@ def build_requests() -> list[dict[str, Any]]:
                 "});",
             ],
         },
+        {
+            "folder": "4 · A2A",
+            "name": "1. Agent card lists the JSON-RPC interface",
+            "method": "GET",
+            "path": "/.well-known/agent-card.json",
+            "description": (
+                "A standard A2A client starts here. The card lists the JSON-RPC binding at /a2a and says push "
+                "notifications are supported. Folder 4 uses the identities registered in folder 2, so run that first."
+            ),
+            "tests": [
+                "pm.test('JSON-RPC interface and push notifications are advertised', () => {",
+                "  pm.response.to.have.status(200);",
+                "  const card = pm.response.json();",
+                "  const rpc = card.supportedInterfaces.find(i => i.protocolBinding === 'JSONRPC');",
+                "  pm.expect(rpc.url).to.match(/\\/a2a$/);",
+                "  pm.expect(card.capabilities.pushNotifications).to.eql(true);",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "2. SendMessage: open-escrow (contract signed by both parties)",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(
+                1, "SendMessage", skill_message("msg-w14-open", "open-escrow", contract(A2A_DEAL, HONEST_PRICE, buyer))
+            ),
+            "description": (
+                "The same signed contract as POST /v1/deals, carried in a DataPart. The deal becomes a task whose id "
+                "is the deal id. With dry-run PayPal the funds are held at once, so the task asks the seller for the "
+                "delivery (INPUT_REQUIRED). With sandbox credentials it is AUTH_REQUIRED until the payer approves."
+            ),
+            "tests": [
+                "pm.test('the deal is a task (id = deal id), waiting on a person or the seller', () => {",
+                "  const task = pm.response.json().result.task;",
+                "  pm.expect(task.id).to.eql('" + A2A_DEAL + "');",
+                "  pm.expect(['TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED', 'TASK_STATE_COMPLETED'])",
+                "    .to.include(task.status.state);",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "3. GetTask",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(2, "GetTask", {"id": A2A_DEAL}),
+            "description": "The task is a view of the durable deal, rebuilt on every read.",
+            "tests": [
+                "pm.test('GetTask returns the deal task', () => {",
+                "  pm.response.to.have.status(200);",
+                "  const task = pm.response.json().result;",
+                "  pm.expect(task.id).to.eql('" + A2A_DEAL + "');",
+                "  pm.expect(task.contextId).to.eql('" + A2A_DEAL + "');",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "4. SendMessage: record-delivery (signed by the seller)",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(
+                3,
+                "SendMessage",
+                skill_message("msg-w14-deliver", "record-delivery", delivery_body(A2A_DEAL, seller), A2A_DEAL),
+            ),
+            "description": (
+                "The seller reports the delivery to the task. On a re-run the task has finished, and A2A refuses "
+                "messages to a finished task with -32004."
+            ),
+            "tests": [
+                "pm.test('delivery recorded (WORKING), or the task already finished (-32004)', () => {",
+                "  const body = pm.response.json();",
+                "  if (body.error) { pm.expect(body.error.code).to.eql(-32004); return; }",
+                "  pm.expect(body.result.task.status.state).to.eql('TASK_STATE_WORKING');",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "5. SendMessage: attest-delivery (signed by the buyer)",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(
+                4, "SendMessage", skill_message("msg-w14-attest", "attest-delivery", attest_body(A2A_DEAL), A2A_DEAL)
+            ),
+            "description": "The buyer verifies the hash and accepts. The held funds are captured to the seller.",
+            "tests": [
+                "pm.test('attested: the task completes, or it had already finished (-32004)', () => {",
+                "  const body = pm.response.json();",
+                "  if (body.error) { pm.expect(body.error.code).to.eql(-32004); return; }",
+                "  pm.expect(body.result.task.status.state).to.eql('TASK_STATE_COMPLETED');",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "6. GetTask: COMPLETED with a settlement receipt",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(5, "GetTask", {"id": A2A_DEAL}),
+            "description": "The result is an artifact: outcome, amount, order and capture ids, contract digest.",
+            "tests": [
+                "pm.test('COMPLETED with a settled settlement-receipt', () => {",
+                "  const task = pm.response.json().result;",
+                "  pm.expect(task.status.state).to.eql('TASK_STATE_COMPLETED');",
+                "  const receipt = task.artifacts.find(a => a.artifactId === 'settlement-receipt').parts[0].data;",
+                "  pm.expect(receipt.outcome).to.eql('settled');",
+                "  pm.expect(receipt.amount).to.eql('" + str(HONEST_PRICE) + "');",
+                "  pm.expect(receipt).to.have.property('captureId');",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "Forged contract over A2A is REJECTED",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(
+                6,
+                "SendMessage",
+                skill_message("msg-w14-forged", "open-escrow", contract(A2A_FORGED_DEAL, HONEST_PRICE, attacker)),
+            ),
+            "description": "A buyer signature from an unregistered key. Nothing is held and the deal id is not taken.",
+            "tests": [
+                "pm.test('REJECTED, with the reason in the status message', () => {",
+                "  const task = pm.response.json().result.task;",
+                "  pm.expect(task.status.state).to.eql('TASK_STATE_REJECTED');",
+                "  pm.expect(task.status.message.parts[0].text).to.include('401');",
+                "});",
+            ],
+        },
+        {
+            "folder": "4 · A2A",
+            "name": "Unknown method is a JSON-RPC error",
+            "method": "POST",
+            "path": "/a2a",
+            "body": rpc(7, "DoesNotExist", {}),
+            "description": "Protocol mistakes are JSON-RPC errors (-32601 here) inside an HTTP 200.",
+            "tests": [
+                "pm.test('-32601 method not found', () => {",
+                "  pm.response.to.have.status(200);",
+                "  pm.expect(pm.response.json().error.code).to.eql(-32601);",
+                "});",
+            ],
+        },
     ]
 
 
@@ -446,7 +610,8 @@ def build_collection() -> dict[str, Any]:
         "**Run it.** Start the API (`uvicorn trustee.arena.api:app --port 8000`) and run the collection. "
         "Folder 2 is the honest path: the deal settles and PayPal captures the held funds (dry-run when no PayPal "
         "credentials are set). Folder 3 proves three refusals: a forged signature, a price over the mandate cap, "
-        "and a delivery signed by the wrong party.\n\n"
+        "and a delivery signed by the wrong party. Folder 4 runs the same deal over the A2A JSON-RPC binding "
+        "(`POST /a2a`): it needs the identities from folder 2, so run the folders in order.\n\n"
         "**Re-running.** A fresh server gives a clean pass. On the same server, registrations return 200, the "
         "identical mandates and deal return 201 and 200, the delivery returns 409 (the deal has already settled) and "
         "the attestation returns 200 as a no-op.\n\n"

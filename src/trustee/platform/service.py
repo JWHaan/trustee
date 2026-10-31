@@ -373,6 +373,20 @@ class DealService:
         trustee, contract = self._require(deal_id)
         return self._view(trustee, contract)
 
+    def record(self, deal_id: str) -> dict[str, Any]:
+        """Live facts about one deal for protocol bindings other than REST (the A2A task view).
+
+        Read-only. `snapshot` is the same dict the store persists, taken under the trustee's lock, so a
+        reader never sees a half-applied transition. `updated_at` is the store's last write time."""
+        trustee, contract = self._require(deal_id)
+        row = self.store.get_deal(deal_id)
+        return {
+            "deal_id": deal_id,
+            "snapshot": trustee.snapshot(),
+            "contract": contract.model_dump(mode="json"),
+            "updated_at": row["updated_at"] if row else None,
+        }
+
     @staticmethod
     def _view(trustee: Trustee, contract: Contract) -> dict[str, Any]:
         snap = trustee.snapshot()

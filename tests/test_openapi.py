@@ -16,7 +16,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC_PATH = ROOT / "openapi" / "trustee-v1.json"
-PUBLIC_PREFIXES = ("/v1/", "/.well-known/")
+PUBLIC_PREFIXES = ("/v1/", "/.well-known/", "/a2a")
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
 
@@ -84,6 +84,15 @@ def test_every_operation_has_a_unique_id_and_a_tag(committed: dict[str, Any]) ->
     assert len(ids) == len(set(ids)), "operationId values must be unique"
     for op_id in ids:
         assert op_id == op_id.lower() and " " not in op_id, f"operationId {op_id!r} is not snake_case"
+
+
+def test_the_a2a_endpoint_is_documented_under_its_own_tag(committed: dict[str, Any]) -> None:
+    op = committed["paths"]["/a2a"]["post"]
+    assert op["tags"] == ["A2A"] and op["operationId"] == "a2a_jsonrpc"
+    request_schema = op["requestBody"]["content"]["application/json"]["schema"]
+    assert "SendMessage" in request_schema["properties"]["method"]["enum"]
+    assert "message/send" in request_schema["properties"]["method"]["description"]
+    assert set(op["responses"]) == {"200"}  # protocol errors are JSON-RPC errors inside an HTTP 200
 
 
 def test_every_tag_used_is_declared(committed: dict[str, Any]) -> None:

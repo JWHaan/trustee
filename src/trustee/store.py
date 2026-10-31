@@ -81,6 +81,23 @@ _V1_STATEMENTS: tuple[str, ...] = (
 )
 
 
+# Additive tables, created on every open with IF NOT EXISTS. They do not bump SCHEMA_VERSION: a database
+# written by this build stays readable by one that predates them (it never looks at these tables).
+_ADDITIVE_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS push_configs (
+        config_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        token TEXT,
+        auth_scheme TEXT,
+        auth_credentials TEXT,
+        dialect TEXT NOT NULL DEFAULT 'v1',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS push_configs_task ON push_configs(task_id)",
+)
+
+
 class StoreConflict(Exception):
     """A write would silently replace an identity already on record."""
 
@@ -161,6 +178,8 @@ class Store:
                     "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
                 )
+            for statement in _ADDITIVE_STATEMENTS:
+                conn.execute(statement)
 
     # -- agents --------------------------------------------------------------
 
@@ -366,6 +385,58 @@ class Store:
                 log.exception("store: failed to persist ledger event %s; continuing", ev.kind)
 
         return ledger.subscribe(_persist)
+
+    # -- push notification configs (A2A) -----------------------------------------
+
+    def put_push_config(
+        self,
+        config_id: str,
+        task_id: str,
+        url: str,
+        token: str | None = None,
+        auth_scheme: str | None = None,
+        auth_credentials: str | None = None,
+        dialect: str = "v1",
+    ) -> None:
+        """Create or replace a push config. A config id already used by a different task raises StoreConflict."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT task_id FROM push_configs WHERE config_id = ?", (config_id,)).fetchone()
+            if row is not None and row["task_id"] != task_id:
+                raise StoreConflict(f"push config {config_id!r} belongs to a different task")
+            conn.execute(
+                "INSERT INTO push_configs (config_id, task_id, url, token, auth_scheme, auth_credentials, dialect,"
+                " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(config_id) DO UPDATE SET url = excluded.url, token = excluded.token,"
+                " auth_scheme = excluded.auth_scheme, auth_credentials = excluded.auth_credentials,"
+                " dialect = excluded.dialect",
+                (config_id, task_id, url, token, auth_scheme, auth_credentials, dialect, _now()),
+            )
+
+    def get_push_config(self, task_id: str, config_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM push_configs WHERE task_id = ? AND config_id = ?", (task_id, config_id)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_push_configs(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM push_configs WHERE task_id = ? ORDER BY created_at, config_id", (task_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_push_config(self, task_id: str, config_id: str) -> bool:
+        """Remove a config. Returns False when there was none (deleting twice is harmless)."""
+        with self._tx() as conn:
+            cur = conn.execute("DELETE FROM push_configs WHERE task_id = ? AND config_id = ?", (task_id, config_id))
+            return cur.rowcount == 1
+
+    def push_config_task_ids(self) -> set[str]:
+        """Ids of every task that has at least one push config."""
+        with self._lock:
+            rows = self._conn.execute("SELECT DISTINCT task_id FROM push_configs").fetchall()
+        return {r["task_id"] for r in rows}
 
     # -- webhooks ------------------------------------------------------------
 

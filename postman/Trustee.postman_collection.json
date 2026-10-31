@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "b4451223-7296-5ed3-b057-d155006ac139",
-    "description": "Runs the Trustee platform API end to end without writing code.\n\n**Demo-only keys.** Request bodies are signed in advance with Ed25519 keys derived from seeds that are published in `scripts/make_postman.py`. These keys exist only to sign these samples. Do not register them on a server that holds money, and do not reuse them as real identities.\n\n**Run it.** Start the API (`uvicorn trustee.arena.api:app --port 8000`) and run the collection. Folder 2 is the honest path: the deal settles and PayPal captures the held funds (dry-run when no PayPal credentials are set). Folder 3 proves three refusals: a forged signature, a price over the mandate cap, and a delivery signed by the wrong party.\n\n**Re-running.** A fresh server gives a clean pass. On the same server, registrations return 200, the identical mandates and deal return 201 and 200, the delivery returns 409 (the deal has already settled) and the attestation returns 200 as a no-op.\n\nThe API contract is `openapi/trustee-v1.json`. The SDK workflow is documented in `docs/SDKS.md`.",
+    "description": "Runs the Trustee platform API end to end without writing code.\n\n**Demo-only keys.** Request bodies are signed in advance with Ed25519 keys derived from seeds that are published in `scripts/make_postman.py`. These keys exist only to sign these samples. Do not register them on a server that holds money, and do not reuse them as real identities.\n\n**Run it.** Start the API (`uvicorn trustee.arena.api:app --port 8000`) and run the collection. Folder 2 is the honest path: the deal settles and PayPal captures the held funds (dry-run when no PayPal credentials are set). Folder 3 proves three refusals: a forged signature, a price over the mandate cap, and a delivery signed by the wrong party. Folder 4 runs the same deal over the A2A JSON-RPC binding (`POST /a2a`): it needs the identities from folder 2, so run the folders in order.\n\n**Re-running.** A fresh server gives a clean pass. On the same server, registrations return 200, the identical mandates and deal return 201 and 200, the delivery returns 409 (the deal has already settled) and the attestation returns 200 as a no-op.\n\nThe API contract is `openapi/trustee-v1.json`. The SDK workflow is documented in `docs/SDKS.md`.",
     "name": "Trustee Platform API",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -810,6 +810,405 @@
         }
       ],
       "name": "3 · Refusals"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('JSON-RPC interface and push notifications are advertised', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const card = pm.response.json();",
+                  "  const rpc = card.supportedInterfaces.find(i => i.protocolBinding === 'JSONRPC');",
+                  "  pm.expect(rpc.url).to.match(/\\/a2a$/);",
+                  "  pm.expect(card.capabilities.pushNotifications).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "1. Agent card lists the JSON-RPC interface",
+          "request": {
+            "description": "A standard A2A client starts here. The card lists the JSON-RPC binding at /a2a and says push notifications are supported. Folder 4 uses the identities registered in folder 2, so run that first.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "agent-card.json"
+              ],
+              "raw": "{{baseUrl}}/.well-known/agent-card.json"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('the deal is a task (id = deal id), waiting on a person or the seller', () => {",
+                  "  const task = pm.response.json().result.task;",
+                  "  pm.expect(task.id).to.eql('deal-w14-a2a-001');",
+                  "  pm.expect(['TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED', 'TASK_STATE_COMPLETED'])",
+                  "    .to.include(task.status.state);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "2. SendMessage: open-escrow (contract signed by both parties)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 1,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"SendMessage\",\n  \"params\": {\n    \"message\": {\n      \"messageId\": \"msg-w14-open\",\n      \"parts\": [\n        {\n          \"data\": {\n            \"input\": {\n              \"buyer\": \"demo-buyer-agent\",\n              \"currency\": \"USD\",\n              \"deadline\": \"2027-12-31T23:59:00\",\n              \"deal_id\": \"deal-w14-a2a-001\",\n              \"formed_at\": \"2026-10-31T09:00:00\",\n              \"good\": {\n                \"acceptance_criteria\": [\n                  \"sha256 matches the contract\",\n                  \"CSV parses\"\n                ],\n                \"category\": \"digital\",\n                \"deliverable_ref\": \"returns-2026q3.csv\",\n                \"description\": \"Q3 2026 returns extract\",\n                \"good_id\": \"good-w12-returns-2026q3\",\n                \"sha256\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\"\n              },\n              \"price\": \"100.00\",\n              \"seller\": \"demo-seller-agent\",\n              \"signatures\": {\n                \"demo-buyer-agent\": \"wv32Twhrc8-tN4ZROwPEe5govHJbSVfzEYkwcOWp9fM1LLDzGD2NSWFD4-g6KIqtvNpuZAQKaw1zfVsscU2mBA==\",\n                \"demo-seller-agent\": \"S9On7N6q7HJ7IgM9GL2qdAAj8CgqBPz2BD0hUQ8xzMr8YTgxkj6KuovVS0ADOEDniGNSamwxavnwabwjyxEZAw==\"\n              },\n              \"transcript_ref\": \"\"\n            },\n            \"skill\": \"open-escrow\"\n          }\n        }\n      ],\n      \"role\": \"ROLE_USER\"\n    }\n  }\n}"
+            },
+            "description": "The same signed contract as POST /v1/deals, carried in a DataPart. The deal becomes a task whose id is the deal id. With dry-run PayPal the funds are held at once, so the task asks the seller for the delivery (INPUT_REQUIRED). With sandbox credentials it is AUTH_REQUIRED until the payer approves.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('GetTask returns the deal task', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const task = pm.response.json().result;",
+                  "  pm.expect(task.id).to.eql('deal-w14-a2a-001');",
+                  "  pm.expect(task.contextId).to.eql('deal-w14-a2a-001');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "3. GetTask",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 2,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"GetTask\",\n  \"params\": {\n    \"id\": \"deal-w14-a2a-001\"\n  }\n}"
+            },
+            "description": "The task is a view of the durable deal, rebuilt on every read.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('delivery recorded (WORKING), or the task already finished (-32004)', () => {",
+                  "  const body = pm.response.json();",
+                  "  if (body.error) { pm.expect(body.error.code).to.eql(-32004); return; }",
+                  "  pm.expect(body.result.task.status.state).to.eql('TASK_STATE_WORKING');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "4. SendMessage: record-delivery (signed by the seller)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 3,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"SendMessage\",\n  \"params\": {\n    \"message\": {\n      \"messageId\": \"msg-w14-deliver\",\n      \"parts\": [\n        {\n          \"data\": {\n            \"input\": {\n              \"content_hash\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\",\n              \"deal_id\": \"deal-w14-a2a-001\",\n              \"deliverable_ref\": \"returns-2026q3.csv\",\n              \"delivered_at\": \"2026-10-31T09:05:00\",\n              \"kind\": \"delivery\",\n              \"msg_id\": \"msg-deal-w14-a2a-001-delivery\",\n              \"sender\": \"demo-seller-agent\",\n              \"signature\": \"vV89u9wblXOJoV-1Yq2TWiPHMj7rz8RYl7AlidgfOoAVVAQvbHGBENyQkmkFEUsRUw2c1M_9TvWmcn_wKDNOAA==\",\n              \"ts\": \"2026-10-31T09:05:00\"\n            },\n            \"skill\": \"record-delivery\"\n          }\n        }\n      ],\n      \"role\": \"ROLE_USER\",\n      \"taskId\": \"deal-w14-a2a-001\"\n    }\n  }\n}"
+            },
+            "description": "The seller reports the delivery to the task. On a re-run the task has finished, and A2A refuses messages to a finished task with -32004.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('attested: the task completes, or it had already finished (-32004)', () => {",
+                  "  const body = pm.response.json();",
+                  "  if (body.error) { pm.expect(body.error.code).to.eql(-32004); return; }",
+                  "  pm.expect(body.result.task.status.state).to.eql('TASK_STATE_COMPLETED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "5. SendMessage: attest-delivery (signed by the buyer)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 4,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"SendMessage\",\n  \"params\": {\n    \"message\": {\n      \"messageId\": \"msg-w14-attest\",\n      \"parts\": [\n        {\n          \"data\": {\n            \"input\": {\n              \"deal_id\": \"deal-w14-a2a-001\",\n              \"evidence\": {\n                \"sha256\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\"\n              },\n              \"kind\": \"attest\",\n              \"msg_id\": \"msg-deal-w14-a2a-001-attest\",\n              \"reason\": \"sha256 of the delivered bytes matches the contract\",\n              \"sender\": \"demo-buyer-agent\",\n              \"signature\": \"Llh5SiK87UyVx8TcT8_GOIlFGv_E4IaY81TkAUiRZ_-gKW9Aw0WpHiLWli8Oe6TZ2E1rc0ft0CinNDJkEGGSBA==\",\n              \"ts\": \"2026-10-31T09:10:00\",\n              \"verdict\": \"accept\"\n            },\n            \"skill\": \"attest-delivery\"\n          }\n        }\n      ],\n      \"role\": \"ROLE_USER\",\n      \"taskId\": \"deal-w14-a2a-001\"\n    }\n  }\n}"
+            },
+            "description": "The buyer verifies the hash and accepts. The held funds are captured to the seller.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('COMPLETED with a settled settlement-receipt', () => {",
+                  "  const task = pm.response.json().result;",
+                  "  pm.expect(task.status.state).to.eql('TASK_STATE_COMPLETED');",
+                  "  const receipt = task.artifacts.find(a => a.artifactId === 'settlement-receipt').parts[0].data;",
+                  "  pm.expect(receipt.outcome).to.eql('settled');",
+                  "  pm.expect(receipt.amount).to.eql('100.00');",
+                  "  pm.expect(receipt).to.have.property('captureId');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "6. GetTask: COMPLETED with a settlement receipt",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 5,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"GetTask\",\n  \"params\": {\n    \"id\": \"deal-w14-a2a-001\"\n  }\n}"
+            },
+            "description": "The result is an artifact: outcome, amount, order and capture ids, contract digest.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('REJECTED, with the reason in the status message', () => {",
+                  "  const task = pm.response.json().result.task;",
+                  "  pm.expect(task.status.state).to.eql('TASK_STATE_REJECTED');",
+                  "  pm.expect(task.status.message.parts[0].text).to.include('401');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Forged contract over A2A is REJECTED",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 6,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"SendMessage\",\n  \"params\": {\n    \"message\": {\n      \"messageId\": \"msg-w14-forged\",\n      \"parts\": [\n        {\n          \"data\": {\n            \"input\": {\n              \"buyer\": \"demo-buyer-agent\",\n              \"currency\": \"USD\",\n              \"deadline\": \"2027-12-31T23:59:00\",\n              \"deal_id\": \"deal-w14-a2a-forged-001\",\n              \"formed_at\": \"2026-10-31T09:00:00\",\n              \"good\": {\n                \"acceptance_criteria\": [\n                  \"sha256 matches the contract\",\n                  \"CSV parses\"\n                ],\n                \"category\": \"digital\",\n                \"deliverable_ref\": \"returns-2026q3.csv\",\n                \"description\": \"Q3 2026 returns extract\",\n                \"good_id\": \"good-w12-returns-2026q3\",\n                \"sha256\": \"8ff166719de991e5eeb25a14f1b3d6c94223c5dca7ac0a3ff695133b8ce85c09\"\n              },\n              \"price\": \"100.00\",\n              \"seller\": \"demo-seller-agent\",\n              \"signatures\": {\n                \"demo-buyer-agent\": \"lXWYHjE5EXxirrVfhiJU8rkMNV374fh4qM6noJLnNAD6LK7R9isx_5CWbMBtXFGas_ZWguloxdfLF5_BpdvPBA==\",\n                \"demo-seller-agent\": \"iuSGcg7e_Sjat3mmdsFBmV2lj_UeB3QAcEEzwy7Vbb2YvtOS8IwXA2H9zr_4CV8N-iTR5vjYDeYqZHDupFG8AA==\"\n              },\n              \"transcript_ref\": \"\"\n            },\n            \"skill\": \"open-escrow\"\n          }\n        }\n      ],\n      \"role\": \"ROLE_USER\"\n    }\n  }\n}"
+            },
+            "description": "A buyer signature from an unregistered key. Nothing is held and the deal id is not taken.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('-32601 method not found', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().error.code).to.eql(-32601);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Unknown method is a JSON-RPC error",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"id\": 7,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"DoesNotExist\",\n  \"params\": {}\n}"
+            },
+            "description": "Protocol mistakes are JSON-RPC errors (-32601 here) inside an HTTP 200.",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "a2a"
+              ],
+              "raw": "{{baseUrl}}/a2a"
+            }
+          }
+        }
+      ],
+      "name": "4 · A2A"
     }
   ],
   "variable": [

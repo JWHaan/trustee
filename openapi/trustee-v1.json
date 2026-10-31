@@ -662,6 +662,156 @@
         ]
       }
     },
+    "/a2a": {
+      "post": {
+        "description": "The Agent2Agent protocol (spec 1.0.0, JSON-RPC binding) in front of the same service as `/v1`. Invoke a Trustee skill with `SendMessage` and one DataPart `{\"skill\": \"<id>\", \"input\": {...}}`; the input is the REST body of the matching `/v1` operation. A deal is a task whose id is the deal id; `GetTask` rebuilds it from the durable deal. Register a webhook with `CreateTaskPushNotificationConfig` (or `configuration.taskPushNotificationConfig` in `SendMessage`) to be told when funds are held or released. Signatures inside the payloads authorize every change; A2A is only the transport. Streaming is not supported. Skills and states are described in `docs/A2A.md` and the Agent Card.",
+        "operationId": "a2a_jsonrpc",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "get_task": {
+                  "summary": "Poll a deal task",
+                  "value": {
+                    "id": 2,
+                    "jsonrpc": "2.0",
+                    "method": "GetTask",
+                    "params": {
+                      "id": "deal-w12-honest-001"
+                    }
+                  }
+                },
+                "skill_help": {
+                  "summary": "Ask what Trustee can do (text only)",
+                  "value": {
+                    "id": 1,
+                    "jsonrpc": "2.0",
+                    "method": "SendMessage",
+                    "params": {
+                      "message": {
+                        "messageId": "m-1",
+                        "parts": [
+                          {
+                            "text": "What can you do?"
+                          }
+                        ],
+                        "role": "ROLE_USER"
+                      }
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "properties": {
+                  "id": {
+                    "description": "Echoed in the response.",
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  },
+                  "jsonrpc": {
+                    "enum": [
+                      "2.0"
+                    ],
+                    "type": "string"
+                  },
+                  "method": {
+                    "description": "A2A 1.0 method name. The v0.3 names (`message/send`, `tasks/get`, `tasks/cancel`, `tasks/pushNotificationConfig/set|get|list|delete`) are accepted and answered in the v0.3 shape.",
+                    "enum": [
+                      "SendMessage",
+                      "SendStreamingMessage",
+                      "GetTask",
+                      "ListTasks",
+                      "CancelTask",
+                      "SubscribeToTask",
+                      "CreateTaskPushNotificationConfig",
+                      "GetTaskPushNotificationConfig",
+                      "ListTaskPushNotificationConfigs",
+                      "DeleteTaskPushNotificationConfig",
+                      "GetExtendedAgentCard"
+                    ],
+                    "type": "string"
+                  },
+                  "params": {
+                    "description": "The method's request object (SendMessageRequest, ...).",
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Exactly one of `result` and `error`. Protocol errors are JSON-RPC errors in an HTTP 200.",
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "description": "JSON-RPC -32700..-32603, or an A2A code -32001..-32009.",
+                          "type": "integer"
+                        },
+                        "data": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "jsonrpc": {
+                      "enum": [
+                        "2.0"
+                      ],
+                      "type": "string"
+                    },
+                    "result": {
+                      "description": "SendMessage: {task} or {message}. GetTask, CancelTask: a Task. ListTasks: {tasks, ...}."
+                    }
+                  },
+                  "required": [
+                    "jsonrpc",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "A JSON-RPC response. Errors are reported in `error`, with HTTP 200."
+          }
+        },
+        "summary": "A2A JSON-RPC endpoint (SendMessage, GetTask, ListTasks, CancelTask, push configs)",
+        "tags": [
+          "A2A"
+        ]
+      }
+    },
     "/v1/agents": {
       "post": {
         "description": "Registers an agent key. Two signatures are required: `proof` (the agent proves it holds its key) and `principal_signature` (the principal vouches for this agent). Both sign the same canonical bytes `{agent_id, public_key, principal, roles (sorted), paypal_email}`. No bearer token: the principal's signature is the authorization. Returns 201 on first registration and 200 when the identical registration is repeated.",
@@ -2069,6 +2219,10 @@
     {
       "description": "A2A Agent Card for discovering Trustee's skills.",
       "name": "Discovery"
+    },
+    {
+      "description": "Agent2Agent JSON-RPC binding: invoke skills, follow a deal as a task, get push updates.",
+      "name": "A2A"
     }
   ]
 }
