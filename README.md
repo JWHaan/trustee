@@ -41,8 +41,8 @@ no-ops — funds can never double-settle or strand.
 |---|---|
 | ![honest run](docs/arena-honest.png) | ![cheat run](docs/arena-cheat.png) |
 
-> These two screenshots predate the identity column, the signature/PayPal chips, the kind filter and the
-> approval banner. They are kept as-is and need re-shooting.
+> These two screenshots predate the arena redesign (scenario cards, deal timeline, money panel, chat-style
+> transcript, restyled ledger tape). They are kept as-is and need re-shooting.
 
 ## Run it
 

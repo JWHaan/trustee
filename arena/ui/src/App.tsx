@@ -1,40 +1,76 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import {
+  fetchHealth,
   fetchScenarios,
   startRun,
   streamRun,
+  type Health,
   type Mode,
   type Row,
   type ScenarioInfo,
   type Snapshot,
 } from "./api";
-import { LedgerGrid } from "./LedgerGrid";
-import { Transcript } from "./Transcript";
-import { TrustStrip } from "./TrustStrip";
 import { ApprovalBanner } from "./Approval";
-import { money, pendingApproval } from "./describe";
+import { Header } from "./Header";
+import { LedgerGrid } from "./LedgerGrid";
+import { MoneyPanel } from "./MoneyPanel";
+import { ScenarioPicker } from "./ScenarioPicker";
+import { Timeline } from "./Timeline";
+import { Transcript } from "./Transcript";
+import { pendingApproval } from "./describe";
 
-const MODE_LABEL: Record<string, string> = {
-  auto: "auto (live → scripted)",
-  live: "live only",
-  scripted: "scripted",
-};
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [running, setRunning] = useState(false);
   const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
+  const [warming, setWarming] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
   const [mode, setMode] = useState<Mode>("auto");
+  const [current, setCurrent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
 
+  // A hosted free-tier server may be asleep: retry with a visible "warming" state before giving up.
   useEffect(() => {
-    fetchScenarios()
-      .then(setScenarios)
-      .catch((e: Error) => setError(e.message));
+    let cancelled = false;
+    (async () => {
+      for (let attempt = 0; attempt < 30 && !cancelled; attempt++) {
+        try {
+          const list = await fetchScenarios();
+          if (!cancelled) {
+            setScenarios(list);
+            setWarming(false);
+          }
+          return;
+        } catch (e) {
+          if (attempt === 1) setWarming(true);
+          if (attempt === 29 && !cancelled) {
+            setWarming(false);
+            setError((e as Error).message);
+          }
+          await delay(2000);
+        }
+      }
+    })();
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (health || !scenarios.length) return;
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, [scenarios, health]);
 
   const run = useCallback(
     async (scenario: string) => {
@@ -42,6 +78,7 @@ export default function App() {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      setCurrent(scenario);
       setRows([]);
       setSnap(null);
       setError(null);
@@ -78,7 +115,6 @@ export default function App() {
     return () => clearTimeout(t);
   }, [scenarios, run]);
 
-  const active = scenarios.find((s) => s.name === (snap?.scenario ?? scenarios[0]?.name));
   const outcome = snap?.outcome ?? null;
   const unapproved = outcome === "approval_timeout" || outcome === "approval_cancelled";
   const verdict =
@@ -90,118 +126,105 @@ export default function App() {
   const rejection = rows.find((r) => r.kind === "identity" && r.check === "rejected");
   const approving = pendingApproval(rows, running);
 
+  const verdictCard = verdict ? (
+    <div className={`verdict ${verdict === "SETTLED" ? "good" : "bad"}`}>
+      <div className="big">
+        {verdict === "SETTLED"
+          ? "Settled: funds captured to seller"
+          : verdict === "REJECTED"
+            ? "Rejected: forged signature, no money moved"
+            : unapproved
+              ? "Voided: the buyer never approved, nothing was charged"
+              : "Voided: buyer refunded"}
+      </div>
+      <div className="why">
+        {verdict === "SETTLED"
+          ? snap?.attest?.reason ?? "delivery attested against the contract clauses"
+          : verdict === "REJECTED"
+            ? rejection?.note ?? "the signature did not match the registered key"
+            : snap?.ruling?.reasoning ?? snap?.attest?.reason ?? "escrow released"}
+      </div>
+      {verdict === "REJECTED" ? (
+        <div className="clause">PayPal was never called · signer: {rejection?.signer ?? "unknown"}</div>
+      ) : snap?.ruling ? (
+        <div className="clause">
+          clause: {snap.ruling.clause} · ruling: {snap.ruling.decision}
+          {snap.ruling.objective ? " (objective)" : " (judged)"}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const footer = (
+    <>
+      {verdictCard}
+      {approving ? <ApprovalBanner row={approving} /> : null}
+    </>
+  );
+
   return (
     <div className="shell">
-      <header>
-        <div className="wordmark">
-          <h1>Trustee</h1>
-          <span>agent-to-agent commerce, settled</span>
-        </div>
-        <div className="header-right">
-          {snap?.fallback_from === "live" ? (
-            <span className="pill fallback">live failed → scripted</span>
-          ) : snap?.effective_mode ? (
-            <span className={`pill ${snap.effective_mode}`}>{snap.effective_mode}</span>
-          ) : null}
-          <span className="pill">{running ? "running" : snap?.outcome ?? snap?.state ?? "idle"}</span>
-        </div>
-      </header>
+      <Header health={health} snap={snap} rows={rows} running={running} />
+      <ScenarioPicker
+        scenarios={scenarios}
+        current={current}
+        running={running}
+        warming={warming}
+        mode={mode}
+        onMode={setMode}
+        onRun={(name) => void run(name)}
+      />
 
-      <TrustStrip rows={rows} snap={snap} running={running} />
+      <section className="timeline-wrap" aria-label="deal progress">
+        <div className="section-bar">
+          <span>Deal timeline</span>
+          <span className="meta">
+            {snap
+              ? `deal ${snap.deal_id?.slice(-8) ?? ""} · ${snap.turns} negotiation moves`
+              : running
+                ? "live"
+                : "waiting for a run"}
+          </span>
+        </div>
+        <Timeline rows={rows} snap={snap} running={running} />
+      </section>
+
+      {error ? (
+        <div className="toast" role="alert">
+          <span>
+            <b>Run failed.</b> {error}
+          </span>
+          <button type="button" className="icon" onClick={() => setError(null)} aria-label="Dismiss error">
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
 
       <main>
-        <section className="panel">
-          <div className="panel-head">
-            <span>negotiation &amp; settlement</span>
-            <span className="count">{rows.filter((r) => r.kind !== "note").length} events</span>
-          </div>
-
-          {verdict ? (
-            <div className={`verdict ${verdict === "SETTLED" ? "good" : "bad"}`}>
-              <div className="big">
-                {verdict === "SETTLED"
-                  ? "settled — funds captured to seller"
-                  : verdict === "REJECTED"
-                    ? "rejected — forged signature, no money moved"
-                    : unapproved
-                      ? "voided — the buyer never approved, nothing was charged"
-                      : "voided — buyer refunded"}
-              </div>
-              <div className="why">
-                {verdict === "SETTLED"
-                  ? snap?.attest?.reason ?? "delivery attested against the contract clauses"
-                  : verdict === "REJECTED"
-                    ? rejection?.note ?? "the signature did not match the registered key"
-                    : snap?.ruling?.reasoning ?? snap?.attest?.reason ?? "escrow released"}
-              </div>
-              {verdict === "REJECTED" ? (
-                <div className="clause">PayPal was never called · signer: {rejection?.signer ?? "unknown"}</div>
-              ) : snap?.ruling ? (
-                <div className="clause">
-                  clause: {snap.ruling.clause} · ruling: {snap.ruling.decision}
-                  {snap.ruling.objective ? " (objective)" : " (judged)"}
-                </div>
-              ) : null}
+        <div className="col-left">
+          <section className="panel money-panel" aria-label="money">
+            <div className="panel-head">
+              <span>Where the money is</span>
             </div>
-          ) : null}
-
-          {approving ? <ApprovalBanner row={approving} /> : null}
-
-          {error ? (
-            <div className="verdict bad">
-              <div className="big">run failed</div>
-              <div className="why">{error}</div>
+            <MoneyPanel rows={rows} snap={snap} running={running} health={health} />
+          </section>
+          <section className="panel feed-panel" aria-label="transcript">
+            <div className="panel-head">
+              <span>Negotiation &amp; settlement</span>
+              <span className="count">{rows.filter((r) => r.kind !== "note").length} events</span>
             </div>
-          ) : null}
+            <Transcript rows={rows} running={running} snap={snap} footer={footer} />
+          </section>
+        </div>
 
-          <Transcript rows={rows} running={running} />
-        </section>
-
-        <section className="panel">
+        <section className="panel ledger-panel" aria-label="ledger tape">
           <div className="panel-head">
-            <span>ledger tape</span>
-            <span className="count">{rows.length} rows</span>
+            <span>Ledger tape</span>
+            <span className="count">append-only</span>
           </div>
           <LedgerGrid rows={rows} />
         </section>
       </main>
-
-      <footer className="controls">
-        {scenarios.map((s) => (
-          <button
-            key={s.name}
-            className={s.cheat || s.attack ? "danger" : "primary"}
-            onClick={() => void run(s.name)}
-            disabled={running}
-            title={s.blurb}
-          >
-            <span className="play">▶</span>
-            {s.title}
-          </button>
-        ))}
-
-        <select value={mode} onChange={(e) => setMode(e.target.value as Mode)} disabled={running} aria-label="mode">
-          {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
-            <option key={m} value={m}>
-              {MODE_LABEL[m]}
-            </option>
-          ))}
-        </select>
-
-        <span className="spacer" />
-
-        {active && !snap ? (
-          <span className="meta">
-            ask <b>{money(active.ask)}</b> · floor <b>{money(active.floor)}</b> · budget{" "}
-            <b>{money(active.budget)}</b>
-          </span>
-        ) : null}
-        {snap ? (
-          <span className="meta">
-            <b>{snap.price ? money(snap.price) : "—"}</b> · {snap.deal_id?.slice(-8) ?? ""} · {snap.turns} moves
-          </span>
-        ) : null}
-      </footer>
     </div>
   );
 }
