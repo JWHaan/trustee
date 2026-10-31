@@ -30,8 +30,15 @@ services:
         value: https://integrate.api.nvidia.com/v1
       - key: LLM_API_KEY
         sync: false
+      # meta/llama-3.1-70b-instruct reached end of life on NIM (410 Gone). Nemotron 3.5
+      # Lightning answers in ~1 s, but only with thinking off; with it on it returns
+      # empty content. LLM_TIMEOUT bounds a slow call so a run falls back instead of hanging.
       - key: LLM_MODEL
-        value: meta/llama-3.1-70b-instruct
+        value: nvidia/nemotron-3.5-lightning-30b-a3b
+      - key: LLM_EXTRA_BODY
+        value: '{"chat_template_kwargs": {"enable_thinking": false}}'
+      - key: LLM_TIMEOUT
+        value: "30"
       # --- PayPal sandbox. Leave both empty for dry-run: the adapter generates
       #     local order ids and never calls the network.
       - key: PAYPAL_CLIENT_ID
