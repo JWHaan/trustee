@@ -53,18 +53,30 @@ def revoke_signing_bytes(agent_id: str) -> bytes:
 class MandateIn(BaseModel):
     """A Mandate as JSON. Decimals travel as strings so the signed bytes survive the round trip."""
 
-    agent_id: str
-    principal: str
-    max_amount: Decimal
-    allowed_categories: list[str] | None = None
-    allowed_counterparties: list[str] | None = None
-    valid_until: datetime | None = None
-    grants: Literal["spend", "receive"] = "spend"
-    notes: str = ""
-    principal_signature: str | None = None
-    max_total: Decimal | None = None
-    revoked: bool = False
-    version: int = Field(default=0, ge=0)
+    agent_id: str = Field(description="Agent the mandate covers.", examples=["buyer-agent"])
+    principal: str = Field(description="Principal who signs the mandate.", examples=["acme-procurement"])
+    max_amount: Decimal = Field(description="Largest single deal, in the deal currency.", examples=["250.00"])
+    allowed_categories: list[str] | None = Field(
+        default=None, description="Deal categories allowed. Null means any.", examples=[["digital"]]
+    )
+    allowed_counterparties: list[str] | None = Field(
+        default=None, description="Agent ids the agent may deal with. Null means any."
+    )
+    valid_until: datetime | None = Field(default=None, description="Mandate expiry. Null means no expiry.")
+    grants: Literal["spend", "receive"] = Field(
+        default="spend", description="`spend` for a buyer, `receive` for a seller."
+    )
+    notes: str = Field(default="", description="Free text the principal signs along with the rest.")
+    principal_signature: str | None = Field(
+        default=None, description="Principal's Ed25519 signature over every other field, urlsafe-base64."
+    )
+    max_total: Decimal | None = Field(
+        default=None, description="Cumulative budget across deals. Null means unbounded.", examples=["1000.00"]
+    )
+    revoked: bool = Field(default=False, description="Send false. Revoke with the revoke endpoint instead.")
+    version: int = Field(
+        default=0, ge=0, description="Strictly increasing per agent. Replaying an older version is a 409."
+    )
 
 
 def mandate_from_in(body: MandateIn) -> Mandate:
@@ -96,26 +108,36 @@ def mandate_from_dict(data: dict[str, Any]) -> Mandate:
 
 
 class PrincipalIn(BaseModel):
-    principal: str = Field(pattern=ID_PATTERN)
-    public_key: str
-    proof: str
+    principal: str = Field(
+        pattern=ID_PATTERN,
+        description="Principal name, 1-128 chars of [A-Za-z0-9._:@-].",
+        examples=["acme-procurement"],
+    )
+    public_key: str = Field(description="Raw 32-byte Ed25519 public key, urlsafe-base64.")
+    proof: str = Field(description="Principal's signature over canonical JSON {principal, public_key}.")
 
 
 class AgentIn(BaseModel):
-    agent_id: str = Field(pattern=ID_PATTERN)
-    public_key: str
-    principal: str = Field(pattern=ID_PATTERN)
-    roles: list[str] = Field(min_length=1)
-    paypal_email: str | None = None
-    proof: str
-    principal_signature: str
+    agent_id: str = Field(pattern=ID_PATTERN, description="Agent id, unique platform-wide.", examples=["buyer-agent"])
+    public_key: str = Field(description="Raw 32-byte Ed25519 public key, urlsafe-base64.")
+    principal: str = Field(pattern=ID_PATTERN, description="Principal that owns this agent.")
+    roles: list[str] = Field(
+        min_length=1, description="Role names the agent holds, e.g. `buyer` or `seller`.", examples=[["buyer"]]
+    )
+    paypal_email: str | None = Field(
+        default=None, description="Payout or payer address. Stored, never returned in full."
+    )
+    proof: str = Field(description="The agent's signature over its registration body (proves key possession).")
+    principal_signature: str = Field(description="The principal's signature over the same registration body.")
 
 
 class RevokeIn(BaseModel):
-    signature: str
+    signature: str = Field(description="Principal's signature over canonical JSON {revoke: agent_id}.")
 
 
 class ResolveIn(BaseModel):
-    decision: Literal["release", "settle"]
-    operator: str = Field(min_length=1)
-    reason: str = ""
+    decision: Literal["release", "settle"] = Field(
+        description="`release` refunds and voids; `settle` captures to the seller."
+    )
+    operator: str = Field(min_length=1, description="Name of the human making the ruling. Recorded in the ledger.")
+    reason: str = Field(default="", description="Why. Recorded in the ledger, truncated to 120 characters on refunds.")

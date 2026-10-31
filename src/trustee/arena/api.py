@@ -35,6 +35,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..alerts import AlertSink, arena_alerts_enabled, sink_from_env
 from ..ledger import Ledger
 from ..paypal import PayPalClient
 from ..platform import DealService, build_router
@@ -273,6 +274,8 @@ def create_app(
         finally:
             stop.set()
             await task
+            for sink in app.state.alert_sinks:
+                sink.close()
 
     app = FastAPI(title="Trustee Arena", version="0.1.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 
@@ -311,6 +314,17 @@ def create_app(
         operator_token=service.operator_token,
         approvals=approvals,
     )
+    # Human alerts derive from ledger events (money path untouched). Unset URL => no sink, no subscriber.
+    alert_sinks: list[AlertSink] = []
+    platform_sink = sink_from_env("platform", public)
+    if platform_sink is not None:
+        platform_sink.attach(service.ledger)
+        alert_sinks.append(platform_sink)
+        if arena_alerts_enabled():  # arena runs are demos: opt in, or every judge click would page Slack
+            arena_sink = sink_from_env("arena", public)
+            if arena_sink is not None:
+                arena_sink.attach(ledger)
+                alert_sinks.append(arena_sink)
     registry = Registry()
     tasks: set[asyncio.Task[None]] = set()
 
@@ -320,6 +334,7 @@ def create_app(
     app.state.registry = registry
     app.state.service = service
     app.state.approvals = approvals
+    app.state.alert_sinks = alert_sinks
     app.include_router(build_router(service, approvals))
 
     # ---------------------------------------------------------------- routes
@@ -402,6 +417,7 @@ def create_app(
             "runs": len(registry),
             "paypal": "dry-run" if paypal.dry_run else "sandbox",
             "ledger": str(ledger.path) if ledger.path else "in-memory",
+            "alerts": "webhook" if alert_sinks else "off",
             "store": service.store.path if service.store.path != ":memory:" else "in-memory",
         }
 

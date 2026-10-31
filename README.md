@@ -203,6 +203,18 @@ python examples/sandbox_poc.py --dry-run     # same steps with no network or cre
 Not implemented from A2A: the JSON-RPC / `message:send` binding, tasks, streaming and push notifications.
 Only discovery (the Agent Card) and a plain HTTP+JSON API are provided.
 
+### SDKs and Postman
+
+- **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route and `/.well-known` route. Regenerate it with
+  `python scripts/export_openapi.py` after an API change. `tests/test_openapi.py` fails when the file is stale.
+- **Postman.** `postman/Trustee.postman_collection.json` runs the honest deal and three refusals end to end.
+  Import it with the environment file in the same folder. Its signed bodies use public demo keys, so do not
+  point it at a server that holds money.
+- **Generated SDKs.** The `sdks` workflow builds Python and TypeScript SDKs with APIMatic. It needs the
+  `APIMATIC_API_KEY` secret and skips with a notice until that secret is set.
+
+Setup, usage sketches and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
+
 ## Layout
 
 ```

@@ -1,0 +1,3 @@
+# The CI workflow copies openapi/trustee-v1.json here before generating, so the repository holds one copy of the spec.
+src/spec/
+sdk/

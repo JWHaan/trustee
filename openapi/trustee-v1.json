@@ -1,0 +1,2074 @@
+{
+  "components": {
+    "schemas": {
+      "AgentIn": {
+        "properties": {
+          "agent_id": {
+            "description": "Agent id, unique platform-wide.",
+            "examples": [
+              "buyer-agent"
+            ],
+            "pattern": "^[A-Za-z0-9._:@-]{1,128}$",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "paypal_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Payout or payer address. Stored, never returned in full.",
+            "title": "Paypal Email"
+          },
+          "principal": {
+            "description": "Principal that owns this agent.",
+            "pattern": "^[A-Za-z0-9._:@-]{1,128}$",
+            "title": "Principal",
+            "type": "string"
+          },
+          "principal_signature": {
+            "description": "The principal's signature over the same registration body.",
+            "title": "Principal Signature",
+            "type": "string"
+          },
+          "proof": {
+            "description": "The agent's signature over its registration body (proves key possession).",
+            "title": "Proof",
+            "type": "string"
+          },
+          "public_key": {
+            "description": "Raw 32-byte Ed25519 public key, urlsafe-base64.",
+            "title": "Public Key",
+            "type": "string"
+          },
+          "roles": {
+            "description": "Role names the agent holds, e.g. `buyer` or `seller`.",
+            "examples": [
+              [
+                "buyer"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Roles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_id",
+          "public_key",
+          "principal",
+          "roles",
+          "proof",
+          "principal_signature"
+        ],
+        "title": "AgentIn",
+        "type": "object"
+      },
+      "Attest": {
+        "description": "Post-delivery verification verdict from the buyer agent.",
+        "properties": {
+          "deal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deal Id"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "object"
+          },
+          "kind": {
+            "const": "attest",
+            "default": "attest",
+            "title": "Kind",
+            "type": "string"
+          },
+          "msg_id": {
+            "title": "Msg Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "sender": {
+            "title": "Sender",
+            "type": "string"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sender's Ed25519 signature over signing_bytes()",
+            "title": "Signature"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "accept",
+              "reject"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sender",
+          "verdict",
+          "reason"
+        ],
+        "title": "Attest",
+        "type": "object"
+      },
+      "Contract": {
+        "description": "The object both agents accepted. Immutable once formed.",
+        "properties": {
+          "buyer": {
+            "title": "Buyer",
+            "type": "string"
+          },
+          "currency": {
+            "default": "USD",
+            "title": "Currency",
+            "type": "string"
+          },
+          "deadline": {
+            "format": "date-time",
+            "title": "Deadline",
+            "type": "string"
+          },
+          "deal_id": {
+            "title": "Deal Id",
+            "type": "string"
+          },
+          "formed_at": {
+            "format": "date-time",
+            "title": "Formed At",
+            "type": "string"
+          },
+          "good": {
+            "$ref": "#/components/schemas/GoodSpec"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Price"
+          },
+          "seller": {
+            "title": "Seller",
+            "type": "string"
+          },
+          "signatures": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "agent_id -> Ed25519 signature over digest() bytes",
+            "title": "Signatures",
+            "type": "object"
+          },
+          "transcript_ref": {
+            "default": "",
+            "description": "Ref to full negotiation transcript",
+            "title": "Transcript Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deal_id",
+          "buyer",
+          "seller",
+          "good",
+          "price",
+          "deadline",
+          "formed_at"
+        ],
+        "title": "Contract",
+        "type": "object"
+      },
+      "Delivery": {
+        "description": "Seller-side handoff record. Hash recorded so the Trustee can verify.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "deal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deal Id"
+          },
+          "deliverable_ref": {
+            "title": "Deliverable Ref",
+            "type": "string"
+          },
+          "delivered_at": {
+            "format": "date-time",
+            "title": "Delivered At",
+            "type": "string"
+          },
+          "kind": {
+            "const": "delivery",
+            "default": "delivery",
+            "title": "Kind",
+            "type": "string"
+          },
+          "msg_id": {
+            "title": "Msg Id",
+            "type": "string"
+          },
+          "sender": {
+            "title": "Sender",
+            "type": "string"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sender's Ed25519 signature over signing_bytes()",
+            "title": "Signature"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sender",
+          "deliverable_ref",
+          "content_hash"
+        ],
+        "title": "Delivery",
+        "type": "object"
+      },
+      "GoodSpec": {
+        "description": "What is being bought. Digital goods only (deliverable end-to-end by agents).",
+        "properties": {
+          "acceptance_criteria": {
+            "description": "Machine-checkable clauses, e.g. 'sha256 in manifest', 'tests pass'",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Acceptance Criteria",
+            "type": "array"
+          },
+          "category": {
+            "default": "digital",
+            "description": "e.g. code, data, design, api-access",
+            "title": "Category",
+            "type": "string"
+          },
+          "deliverable_ref": {
+            "description": "Path under the goods store the seller must deliver, e.g. 'returns-2026q3.csv'",
+            "title": "Deliverable Ref",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "good_id": {
+            "title": "Good Id",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expected hex sha256 of the deliverable, fixed at contract time. The buyer hashes the bytes it received and compares against this value, so neither side can change it after the deal forms.",
+            "title": "Sha256"
+          }
+        },
+        "required": [
+          "good_id",
+          "description",
+          "acceptance_criteria",
+          "deliverable_ref"
+        ],
+        "title": "GoodSpec",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MandateIn": {
+        "description": "A Mandate as JSON. Decimals travel as strings so the signed bytes survive the round trip.",
+        "properties": {
+          "agent_id": {
+            "description": "Agent the mandate covers.",
+            "examples": [
+              "buyer-agent"
+            ],
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "allowed_categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Deal categories allowed. Null means any.",
+            "examples": [
+              [
+                "digital"
+              ]
+            ],
+            "title": "Allowed Categories"
+          },
+          "allowed_counterparties": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Agent ids the agent may deal with. Null means any.",
+            "title": "Allowed Counterparties"
+          },
+          "grants": {
+            "default": "spend",
+            "description": "`spend` for a buyer, `receive` for a seller.",
+            "enum": [
+              "spend",
+              "receive"
+            ],
+            "title": "Grants",
+            "type": "string"
+          },
+          "max_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Largest single deal, in the deal currency.",
+            "examples": [
+              "250.00"
+            ],
+            "title": "Max Amount"
+          },
+          "max_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cumulative budget across deals. Null means unbounded.",
+            "examples": [
+              "1000.00"
+            ],
+            "title": "Max Total"
+          },
+          "notes": {
+            "default": "",
+            "description": "Free text the principal signs along with the rest.",
+            "title": "Notes",
+            "type": "string"
+          },
+          "principal": {
+            "description": "Principal who signs the mandate.",
+            "examples": [
+              "acme-procurement"
+            ],
+            "title": "Principal",
+            "type": "string"
+          },
+          "principal_signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Principal's Ed25519 signature over every other field, urlsafe-base64.",
+            "title": "Principal Signature"
+          },
+          "revoked": {
+            "default": false,
+            "description": "Send false. Revoke with the revoke endpoint instead.",
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mandate expiry. Null means no expiry.",
+            "title": "Valid Until"
+          },
+          "version": {
+            "default": 0,
+            "description": "Strictly increasing per agent. Replaying an older version is a 409.",
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent_id",
+          "principal",
+          "max_amount"
+        ],
+        "title": "MandateIn",
+        "type": "object"
+      },
+      "PrincipalIn": {
+        "properties": {
+          "principal": {
+            "description": "Principal name, 1-128 chars of [A-Za-z0-9._:@-].",
+            "examples": [
+              "acme-procurement"
+            ],
+            "pattern": "^[A-Za-z0-9._:@-]{1,128}$",
+            "title": "Principal",
+            "type": "string"
+          },
+          "proof": {
+            "description": "Principal's signature over canonical JSON {principal, public_key}.",
+            "title": "Proof",
+            "type": "string"
+          },
+          "public_key": {
+            "description": "Raw 32-byte Ed25519 public key, urlsafe-base64.",
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "principal",
+          "public_key",
+          "proof"
+        ],
+        "title": "PrincipalIn",
+        "type": "object"
+      },
+      "ResolveIn": {
+        "properties": {
+          "decision": {
+            "description": "`release` refunds and voids; `settle` captures to the seller.",
+            "enum": [
+              "release",
+              "settle"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "operator": {
+            "description": "Name of the human making the ruling. Recorded in the ledger.",
+            "minLength": 1,
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "description": "Why. Recorded in the ledger, truncated to 120 characters on refunds.",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "operator"
+        ],
+        "title": "ResolveIn",
+        "type": "object"
+      },
+      "RevokeIn": {
+        "properties": {
+          "signature": {
+            "description": "Principal's signature over canonical JSON {revoke: agent_id}.",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signature"
+        ],
+        "title": "RevokeIn",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Trustee is an escrow and arbitration layer for agent-to-agent payments on PayPal. A buyer agent's funds are authorized (held), not captured, until the buyer attests that the seller's delivery matches the contract. Accept captures the funds to the seller. Reject opens a dispute that an arbiter rules on, and a ruling either captures or voids the hold. Dry-run mode (no PayPal credentials) keeps the same API surface.\n\n## Signing scheme\n\nEvery mutating call is attributable to an Ed25519 key. Keys are 32-byte raw public keys, urlsafe-base64. Signed bytes are canonical JSON (sorted keys, no whitespace, UTF-8; Decimals as strings, datetimes as ISO 8601) of the message without its signature field. Signatures are urlsafe-base64. A principal proves its key by signing {principal, public_key}; an agent proves possession by signing its registration body {agent_id, public_key, principal, roles (sorted), paypal_email} and is vouched for by the principal signing the same bytes; a mandate is signed by its principal over every field except principal_signature; a contract carries one signature per party over its sha256 digest; deliveries are signed by the seller and attestations by the buyer. Operator endpoints use an HTTP bearer token.",
+    "title": "Trustee Platform API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/.well-known/agent-card.json": {
+      "get": {
+        "description": "Same document as `/.well-known/agent.json`, served at the path the A2A spec now uses.",
+        "operationId": "get_agent_card_alias",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "A2A Agent Card (current spec path)",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/.well-known/agent.json": {
+      "get": {
+        "description": "Describes Trustee's skills, endpoints and security schemes for A2A clients. The base URL comes from `TRUSTEE_PUBLIC_URL`, or from the request host when that is unset.",
+        "operationId": "get_agent_card",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "A2A Agent Card",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/agents": {
+      "post": {
+        "description": "Registers an agent key. Two signatures are required: `proof` (the agent proves it holds its key) and `principal_signature` (the principal vouches for this agent). Both sign the same canonical bytes `{agent_id, public_key, principal, roles (sorted), paypal_email}`. No bearer token: the principal's signature is the authorization. Returns 201 on first registration and 200 when the identical registration is repeated.",
+        "operationId": "register_agent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid agent proof of possession, or the principal did not vouch for this agent."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The agent id is registered with a different key or under a different principal."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown principal (register it first), or a malformed body."
+          }
+        },
+        "summary": "Register an agent under a principal",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/v1/agents/{agent_id}": {
+      "get": {
+        "description": "Returns the agent's public key, principal and roles. The PayPal payout address is never returned; only `has_paypal_email` says whether one is set.",
+        "operationId": "get_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No agent with this id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read a registered agent's public record",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/v1/deals": {
+      "post": {
+        "description": "`contract.signatures` must hold a valid Ed25519 signature by the buyer and by the seller over the contract digest (sha256 of the canonical terms, excluding `signatures` and `transcript_ref`). The mandate gate then checks the buyer's spending mandate and the seller's receiving mandate. Passing the gate opens an escrow: PayPal Orders v2 `AUTHORIZE`, so the buyer's funds are held and not captured. Returns 201 for a new deal. Repeating the identical contract returns 200 with the current view. A different contract under the same `deal_id` is a 409. A 502 means PayPal failed; the body includes the deal view, and retrying the same request is safe.",
+        "operationId": "open_deal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Contract"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "A party's signature on the contract is missing or invalid."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The mandate gate refused the deal. The body's `violations` lists each failed check."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal id exists with different terms, or a store conflict."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid `deal_id`, or a malformed contract."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed to authorize the escrow. The body's `deal` holds the current view; retry is safe."
+          }
+        },
+        "summary": "Open a deal from a contract signed by both parties",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/deals/{deal_id}": {
+      "get": {
+        "description": "`state` is the deal state machine position (for example CONTRACTED, ESCROWED, DELIVERED, DISPUTED, SETTLED, VOIDED). `escrow` carries the PayPal order and authorization ids and the `approve_url` the payer must visit. `history` lists every transition in order.",
+        "operationId": "get_deal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read a deal's state, escrow, ruling and history",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/deals/{deal_id}/attest": {
+      "post": {
+        "description": "The buyer signs `accept` or `reject`. `accept` captures the held funds and settles the deal to the seller. `reject` opens a dispute: the arbiter rules, and the ruling decides whether the escrow is captured or voided. Attesting before delivery is a 409. Replaying an accept on a terminal deal is a no-op. A 502 means PayPal failed; retrying the same attestation is safe.",
+        "operationId": "attest_delivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Attest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`deal_id` in the body does not match the path."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The attestation is not signed by the buyer."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal is not delivered or disputed yet, or the state transition is illegal."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed to capture or void. The body's `deal` holds the current view."
+          }
+        },
+        "summary": "Buyer's verdict on the delivery (accept or reject)",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/deals/{deal_id}/delivery": {
+      "post": {
+        "description": "The seller signs the delivery with its agent key. `content_hash` is the sha256 of the bytes it delivered. The buyer checks that hash against `good.sha256` when it attests. `deliverable_ref` must match the contract. A delivery signed by anyone other than the seller is a 401.",
+        "operationId": "record_delivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Delivery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`deal_id` in the body does not match the path."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The delivery is not signed by the seller."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal is not in a state that accepts a delivery."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`deliverable_ref` does not match the contract."
+          }
+        },
+        "summary": "Record the seller's delivery of the deliverable",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/deals/{deal_id}/events": {
+      "get": {
+        "description": "Append-only event log for the deal. Pass the last `seq` you saw as `after_seq` to read the next page; `next_after_seq` in the response is the cursor for it.",
+        "operationId": "list_deal_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Page through a deal's audit events",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/deals/{deal_id}/resolve": {
+      "post": {
+        "description": "Operator override for a DISPUTED deal. `release` refunds the buyer and voids the escrow; `settle` captures the held funds to the seller. Terminal deals return a no-op. Needs the operator bearer token (`TRUSTEE_OPERATOR_TOKEN`). Without that variable configured, every call is refused.",
+        "operationId": "resolve_dispute",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or wrong operator bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operator endpoints are disabled: no operator token is configured."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal is not in a state that can be resolved."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unsupported decision, or the operator reason is malformed."
+          }
+        },
+        "summary": "Operator ruling on a disputed deal",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
+    "/v1/mandates": {
+      "post": {
+        "description": "A mandate caps what an agent may spend (`grants: spend`) or receive (`grants: receive`): `max_amount` per deal, optional `max_total` across deals, category and counterparty allow-lists, and `valid_until`. The principal signs every field except `principal_signature` (see the signing scheme in `info.description`). `version` must increase on every publish for the same agent, which blocks replay of an older signed grant. Mandates are enforced when a contract is opened, not when it is published.",
+        "operationId": "publish_mandate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The mandate is not signed by its principal."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The agent belongs to a different principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown agent."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The agent's mandate was revoked (register a new agent id), or `version` is not newer."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed mandate body."
+          }
+        },
+        "summary": "Publish a spending or receiving mandate for an agent",
+        "tags": [
+          "Mandates"
+        ]
+      }
+    },
+    "/v1/mandates/{agent_id}/revoke": {
+      "post": {
+        "description": "The principal signs the canonical bytes `{revoke: agent_id}`. Revocation is permanent for that agent id: deals opened after it are refused by the mandate gate.",
+        "operationId": "revoke_mandate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The revocation is not signed by the agent's principal."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown agent, or no mandate on file for it."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke an agent's mandate",
+        "tags": [
+          "Mandates"
+        ]
+      }
+    },
+    "/v1/paypal/cancel": {
+      "get": {
+        "description": "PayPal redirects the payer here when they abandon approval. The deal moves to VOIDED. Nothing was held, so nothing is refunded.",
+        "operationId": "paypal_cancel",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown PayPal order."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed to void the order."
+          }
+        },
+        "summary": "Payer cancels PayPal approval (browser redirect)",
+        "tags": [
+          "PayPal"
+        ]
+      }
+    },
+    "/v1/paypal/return": {
+      "get": {
+        "description": "PayPal redirects the payer here after approving the order. The request holds funds in escrow. Replays are no-ops. Browsers get an HTML page; clients sending `Accept: application/json` get the decision as JSON.",
+        "operationId": "paypal_return",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unknown PayPal order."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "PayPal failed to finish the hold."
+          }
+        },
+        "summary": "Payer returns from PayPal approval (browser redirect)",
+        "tags": [
+          "PayPal"
+        ]
+      }
+    },
+    "/v1/paypal/webhook": {
+      "post": {
+        "description": "Receives PayPal events (order approved, authorization voided, capture completed or failed). The request is verified against PayPal's signature headers first. Unverified requests are rejected and recorded nowhere. Verified events are de-duplicated by event id.",
+        "operationId": "handle_paypal_webhook",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Body is not a JSON object, or PayPal's signature verification failed."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Handling crashed. The event is not recorded, so PayPal's retry is processed."
+          }
+        },
+        "summary": "PayPal webhook receiver",
+        "tags": [
+          "PayPal"
+        ]
+      }
+    },
+    "/v1/principals": {
+      "post": {
+        "description": "Binds a principal name to an Ed25519 public key. `proof` is the principal's signature over canonical JSON `{principal, public_key}`. Re-posting the same key is idempotent and returns 200; a new key for an existing name is a 409. If the operator has set a bearer token, registration requires it; otherwise registration is open.",
+        "operationId": "register_principal",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing operator bearer token (when one is configured) or invalid proof of possession."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The principal already exists with a different key."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register a principal (a human or company that owns agents)",
+        "tags": [
+          "Principals"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Hosted demo",
+      "url": "https://trustee-arena.onrender.com"
+    },
+    {
+      "description": "Local development (uvicorn)",
+      "url": "http://127.0.0.1:8000"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Humans or companies that own agents and vouch for them.",
+      "name": "Principals"
+    },
+    {
+      "description": "Agent keys registered under a principal.",
+      "name": "Agents"
+    },
+    {
+      "description": "Signed spending or receiving limits that the deal gate enforces.",
+      "name": "Mandates"
+    },
+    {
+      "description": "Escrowed deals: open, deliver, attest, inspect, resolve.",
+      "name": "Deals"
+    },
+    {
+      "description": "Payer redirects and webhooks. Money moves only in these flows.",
+      "name": "PayPal"
+    },
+    {
+      "description": "A2A Agent Card for discovering Trustee's skills.",
+      "name": "Discovery"
+    }
+  ]
+}
