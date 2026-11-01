@@ -53,6 +53,7 @@ from ..llm import LLM
 from ..mandate import Mandate
 from ..paypal import sandbox_emails
 from ..protocol import Accept, Contract, Counter, Delivery, GoodSpec, Offer, new_id
+from .backoffice import Backoffice, BookingResult, Facts
 from .common import (
     AgentIdentity,
     Call,
@@ -165,6 +166,7 @@ class Northwind(NetworkAgent):
         instruction: str | None = None,
         dry_run: bool | None = None,
         demo_funding: Callable[[str], str | None] | None = None,
+        backoffice: Backoffice | None = None,
     ):
         super().__init__(
             identity
@@ -173,6 +175,8 @@ class Northwind(NetworkAgent):
             public_url=public_url,
             observer=observer,
         )
+        # Zapier MCP bookings. None reads NORTHWIND_ZAPIER_* from the environment; without them this is a no-op.
+        self.backoffice = backoffice or Backoffice.from_env("northwind", on_result=self._booking_result)
         self.good = good
         self.budget = budget
         self.llm = llm
@@ -321,6 +325,8 @@ class Northwind(NetworkAgent):
 
         self._tell_seller(tw, deal_id, contract)
 
+        if self.instruction and task.status.state == TaskState.AUTH_REQUIRED and self.backoffice.enabled:
+            self._notify_step_up(deal_id, seller.name or seller.label, contract, task)
         stopped = self._await_funds(trustee, task)
         if stopped is not None:
             purchase.outcome, purchase.task = stopped
@@ -354,6 +360,8 @@ class Northwind(NetworkAgent):
             final = trustee.get_task(deal_id)
         purchase.task = final
         purchase.receipt = artifact_data(final, "settlement-receipt")
+        if purchase.receipt is not None and self.backoffice.enabled:
+            self.backoffice.book_receipt(purchase.receipt, seller.name or seller.label)
         if purchase.receipt is None and final.status.state != TaskState.COMPLETED:
             purchase.outcome = f"deal_{state_name(final).lower()}"
         return purchase
@@ -527,6 +535,28 @@ class Northwind(NetworkAgent):
         self._policy(deal_id, "intent_consent", f'one-time consent signed by the human: "{intent.instruction}"')
         self._policy(deal_id, "intent_limits", f"limits the agent may not exceed: {intent_summary(intent)}")
         self._policy(deal_id, "funding_vaulted", "payment method saved at PayPal once (a reference only)")
+
+    def _notify_step_up(self, deal_id: str, seller_name: str, contract: Contract, task: Task) -> None:
+        """An intent-mandate purchase needs the human: ask Zapier to message the principal. Never raises."""
+        meta = (task.metadata or {}).get("trustee") or {}
+        approve = str(meta.get("approveUrl") or "") or None
+        facts = Facts(
+            deal_id=deal_id,
+            counterparty=seller_name,
+            amount=str(contract.price),
+            currency=contract.currency,
+            outcome="step_up",
+            approve_url=approve,
+        )
+        try:
+            self.backoffice.notify_step_up(facts)
+        except Exception:  # noqa: BLE001 - a notice must never change the purchase
+            log.exception("step-up notice failed for deal %s", deal_id)
+
+    def _booking_result(self, result: BookingResult) -> None:
+        """Show each back-office booking as a hop on the arena tape. Carries no arguments."""
+        note = "booked" if result.ok else f"failed ({result.error})"
+        self.hop(self.identity.agent_id, "zapier", "mcp", result.action, note)
 
     def _funding_ref(self, trustee: PeerLink) -> str | None:
         if self.demo_funding is not None:

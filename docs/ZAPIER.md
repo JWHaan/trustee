@@ -98,3 +98,7 @@ Arena runs are demos, and every judge click on "cheat" would page Slack, so they
 set `TRUSTEE_ALERT_ARENA=1`; arena events then alert with `"source": "arena"`. A correctly refunded cheat is an
 objective breach, so it opens no dispute and sends no alert. The `forged` scenario sends `signature_rejected`. A
 payer who never approves a live PayPal sandbox order sends `approval_expired`.
+
+## Zapier MCP back office
+
+This page covers Trustee's alert webhooks. Northwind and Tidewater can also call Zapier MCP themselves to book settled deals in their own apps (invoices, CRM, bills, finance notes, and a step-up message to the principal). That setup lives in [ZAPIER_MCP.md](ZAPIER_MCP.md).

@@ -14,6 +14,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Zapier MCP back office (network/backoffice.py). Without it that feature stays off and logs one line.
+zapier = [
+    "mcp>=1.8,<2",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
