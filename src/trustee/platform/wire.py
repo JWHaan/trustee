@@ -92,6 +92,18 @@ class MandateIn(BaseModel):
     version: int = Field(
         default=0, ge=0, description="Strictly increasing per agent. Replaying an older version is a 409."
     )
+    min_counterparty_deals: int | None = Field(
+        default=None,
+        ge=0,
+        description="Refuse a counterparty with fewer deals on record than this. Null means no rule.",
+    )
+    max_counterparty_dispute_rate: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Refuse a counterparty whose share of disputed deals exceeds this (0 to 1). Null means no rule.",
+        examples=["0.10"],
+    )
 
 
 def mandate_from_in(body: MandateIn) -> Mandate:
@@ -108,6 +120,8 @@ def mandate_from_in(body: MandateIn) -> Mandate:
         max_total=body.max_total,
         revoked=body.revoked,
         version=body.version,
+        min_counterparty_deals=body.min_counterparty_deals,
+        max_counterparty_dispute_rate=body.max_counterparty_dispute_rate,
     )
 
 

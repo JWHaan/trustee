@@ -33,6 +33,7 @@ from ..mandate import Mandate, MandateEngine, MandateReplay
 from ..paypal import PayPalClient
 from ..protocol import Attest, Contract, Delivery
 from ..receipts import build_receipt, load_signing_key
+from ..reputation import LocalReputation, ReputationProvider
 from ..state import Deal, DealState, IllegalTransition
 from ..store import Store, StoreConflict
 from ..sweeper import DeadlineSweeper
@@ -76,6 +77,7 @@ class DealService:
         sweeper: DeadlineSweeper | None = None,
         operator_token: str | None = None,
         signing_key: AgentKey | None = None,
+        reputation: ReputationProvider | None = None,
     ):
         self.store = store
         self.paypal = paypal
@@ -86,7 +88,9 @@ class DealService:
         self.operator_token = operator_token or None
         self.registry = AgentRegistry()
         self.principals = PrincipalRegistry()
-        self.mandates = MandateEngine(principals=self.principals)
+        # Counterparty reputation rules in mandates read this; the local store is the default source.
+        self.reputation: ReputationProvider = reputation if reputation is not None else LocalReputation(store)
+        self.mandates = MandateEngine(principals=self.principals, reputation=self.reputation)
         # Human-not-present payments: intent mandates, the vaulted funding sources they name, and Trustee's own key.
         self.funding = FundingRegistry(store, paypal)
         self.intents = IntentBook()

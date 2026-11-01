@@ -389,6 +389,10 @@ reconciliation are implemented and tested against a mocked PayPal. P3, the real-
 nobody has run `examples/sandbox_poc.py` or the webhook path with credentials, so the real-PayPal behavior is
 unverified. `docs/BUILD-CRITIQUE.md` §1 lists what was broken in the adapter.
 
+## Elastic (optional)
+
+Ship the ledger to Elasticsearch, expose `GET /v1/agents/{id}/reputation`, add reputation rules to mandates, and ask an Agent Builder ledger analyst over A2A. Off unless `ELASTICSEARCH_URL` is set. See [docs/ELASTIC.md](docs/ELASTIC.md).
+
 ## License
 
 Apache-2.0 (see LICENSE).
