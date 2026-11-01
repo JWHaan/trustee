@@ -393,6 +393,8 @@ unverified. `docs/BUILD-CRITIQUE.md` §1 lists what was broken in the adapter.
 
 Ship the ledger to Elasticsearch, expose `GET /v1/agents/{id}/reputation`, add reputation rules to mandates, and ask an Agent Builder ledger analyst over A2A. Off unless `ELASTICSEARCH_URL` is set. See [docs/ELASTIC.md](docs/ELASTIC.md).
 
+Northwind and Tidewater can also book settled deals in their own apps through Zapier MCP (invoices, CRM, bills, finance notes, and a step-up message to the principal). Off unless each agent's `*_ZAPIER_MCP_TOKEN` and tool map are set. See [docs/ZAPIER_MCP.md](docs/ZAPIER_MCP.md).
+
 ## License
 
 Apache-2.0 (see LICENSE).
