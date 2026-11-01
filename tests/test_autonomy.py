@@ -805,7 +805,8 @@ def test_receipt_verifies_offline_and_every_field_is_bound_by_the_signature(tmp_
     # The same through the command line, offline, from files.
     (tmp_path / "receipt.json").write_text(json.dumps(receipt))
     (tmp_path / "events.json").write_text(json.dumps({"deal_id": "deal-r", "events": events}))
-    argv = [str(tmp_path / "receipt.json"), "--key", key, "--events", str(tmp_path / "events.json")]
+    # `--key=` form: a base64url key can start with "-", which argparse would read as an option after a bare `--key`.
+    argv = [str(tmp_path / "receipt.json"), f"--key={key}", "--events", str(tmp_path / "events.json")]
     assert verify_cli.main(argv) == 0
     (tmp_path / "receipt.json").write_text(json.dumps({**receipt, "amount": "1.00"}))
     assert verify_cli.main(argv) == 1
