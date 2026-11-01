@@ -951,7 +951,7 @@ def test_arena_receipt_verifies_with_the_cli_from_the_tape(tmp_path: Path) -> No
     (tmp_path / "r.json").write_text(json.dumps(result.receipt))
     (tmp_path / "e.json").write_text(json.dumps(events, default=str))
     key = runner.signing_key.public_key_b64
-    assert verify_cli.main([str(tmp_path / "r.json"), "--key", key, "--events", str(tmp_path / "e.json")]) == 0
+    assert verify_cli.main([str(tmp_path / "r.json"), f"--key={key}", "--events", str(tmp_path / "e.json")]) == 0
 
 
 def test_arena_overreach_steps_up_and_says_so_on_the_tape() -> None:

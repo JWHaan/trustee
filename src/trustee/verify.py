@@ -1,6 +1,6 @@
 """Verify a Trustee settlement receipt offline.
 
-    python -m trustee.verify receipt.json --key <base64 public key | https://host/.well-known/trustee-key.json>
+    python -m trustee.verify receipt.json --key=<base64 public key | https://host/.well-known/trustee-key.json>
         [--contract contract.json] [--intent intent.json] [--events events.json]
 
 What is checked:
@@ -135,7 +135,11 @@ def _fetch_key(spec: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m trustee.verify", description="Verify a Trustee settlement receipt.")
     ap.add_argument("receipt", help="receipt JSON file")
-    ap.add_argument("--key", help="Trustee public key (base64) or a URL of /.well-known/trustee-key.json")
+    ap.add_argument(
+        "--key",
+        help="Trustee public key (base64) or a URL of /.well-known/trustee-key.json. Write --key=KEY for a raw key: "
+        "a base64url key can start with '-', which argparse would otherwise read as an option",
+    )
     ap.add_argument("--contract", help="contract JSON; its digest must match the receipt")
     ap.add_argument("--intent", help="intent mandate JSON; its digest must match the receipt")
     ap.add_argument("--principal-key", help="principal public key (base64): also check the intent's signature")
