@@ -89,7 +89,7 @@ ARENA_PRICEFEED_SCENARIO=1 uv run uvicorn ...                                   
 ```
 
 On the A2A path, `create_northwind(good=get_scenario("pricefeed").good)` already carries the checker and counter
-(`default_checkers()` / `default_counters()`), and `trustee.network.tidewater` serves the same files.
+(`default_checkers()` / `default_counters()`),.
 
 ## Going live
 
