@@ -15,6 +15,9 @@ Everything is opt-in through environment variables; the in-process agents of the
     TIDEWATER_CHEAT           1 to ship the corrupt twin of the dataset (Tidewater only)
     TIDEWATER_URL             the seller Northwind may buy from (Northwind only; the trigger's allow-list)
     NORTHWIND_TRIGGER_SECRET  turns on Northwind's operator purchase routes (see trigger.py); unset: they 404
+    NORTHWIND_ZAPIER_MCP_TOKEN, NORTHWIND_ZAPIER_TOOLS, TIDEWATER_ZAPIER_MCP_TOKEN, TIDEWATER_ZAPIER_TOOLS
+                              book settled deals in each business's own apps through Zapier MCP; unset: off
+                              (see docs/ZAPIER_MCP.md)
 
 The A2A routes carry no Astropods sign-in: the agents authenticate every message with Ed25519 signatures.
 `/healthz` answers 200 without touching anything.

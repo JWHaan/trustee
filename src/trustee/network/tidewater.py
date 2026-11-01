@@ -39,8 +39,8 @@ import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from ..a2a.client import A2AClient, push_token_matches, task_from_push
-from ..a2a.models import A2AError, Part, Task, TaskState
+from ..a2a.client import A2AClient, artifact_data, push_token_matches, task_from_push
+from ..a2a.models import TERMINAL_STATES, A2AError, Part, Task, TaskState
 from ..agents.buyer import ArtifactStore
 from ..agents.seller import SellerAgent
 from ..identity import verify
@@ -49,6 +49,7 @@ from ..llm import LLM
 from ..mandate import Mandate
 from ..paypal import sandbox_emails
 from ..protocol import Accept, Contract, Counter, Delivery, GoodSpec
+from .backoffice import Backoffice, BookingResult
 from .common import (
     AgentIdentity,
     Call,
@@ -116,6 +117,7 @@ class Tidewater(NetworkAgent):
         http: httpx.Client | None = None,
         public_url: str | None = None,
         observer: HopObserver | None = None,
+        backoffice: Backoffice | None = None,
     ):
         super().__init__(
             identity or AgentIdentity.generate("tidewater-sales", "tidewater-data-co", "seller", sandbox_emails()[1]),
@@ -123,6 +125,8 @@ class Tidewater(NetworkAgent):
             public_url=public_url,
             observer=observer,
         )
+        # Zapier MCP bookings. None reads TIDEWATER_ZAPIER_* from the environment; without them this is a no-op.
+        self.backoffice = backoffice or Backoffice.from_env("tidewater", on_result=self._booking_result)
         self.good = good
         self.ask = ask
         self.floor = floor
@@ -408,6 +412,28 @@ class Tidewater(NetworkAgent):
         self.hop("trustee", self.identity.label, "push", "task", state)
         if task.status.state == TaskState.INPUT_REQUIRED:
             self._deliver(task.id, "push")
+        if self.backoffice.enabled:
+            self._book_settlement(task)
+
+    def _book_settlement(self, task: Task) -> None:
+        """On a finished deal, book the signed settlement receipt in Tidewater's own apps. Never raises."""
+        try:
+            receipt = artifact_data(task, "settlement-receipt")
+            if receipt is None and task.status.state in TERMINAL_STATES:
+                receipt = artifact_data(self._trustee().get_task(task.id), "settlement-receipt")
+            if receipt is None:
+                return
+            terms = self.deals.get(task.id)
+            buyer = terms.buyer if terms is not None else ""
+            peer = self.peers.get(buyer)
+            self.backoffice.book_receipt(receipt, (peer.name or peer.label) if peer else buyer)
+        except Exception:  # noqa: BLE001 - a booking must never change the deal
+            log.exception("settlement booking failed for deal %s", task.id)
+
+    def _booking_result(self, result: BookingResult) -> None:
+        """Show each back-office booking as a hop on the arena tape. Carries no arguments."""
+        note = "booked" if result.ok else f"failed ({result.error})"
+        self.hop(self.identity.agent_id, "zapier", "mcp", result.action, note)
 
     def _deliver(self, deal_id: str, trigger: str) -> None:
         """Ship the CSV to the buyer, then tell Trustee. Safe to run twice: the second run does nothing."""
