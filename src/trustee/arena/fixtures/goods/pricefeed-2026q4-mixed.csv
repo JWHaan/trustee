@@ -1,0 +1,41 @@
+retailer,product_url,product_title,price,currency,observed_at
+alpinegear.example,,Ridgeline Insulated Water Bottle 32oz Model 01,215.69,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/northfork-insulated-water-bottle-32oz-model-02,Northfork Insulated Water Bottle 32oz Model 02,262.52,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/kestrel-insulated-water-bottle-32oz-model-03,Kestrel Insulated Water Bottle 32oz Model 03,44.61,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/marlow-insulated-water-bottle-32oz-model-04,Marlow Insulated Water Bottle 32oz Model 04,333.70,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/tamarack-insulated-water-bottle-32oz-model-05,Tamarack Insulated Water Bottle 32oz Model 05,164.55,USD,2026-10-31
+trailhead-outfitters.example,,Ridgeline Trail Daypack 24L Model 06,39.01,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/northfork-trail-daypack-24l-model-07,Northfork Trail Daypack 24L Model 07,69.50,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/kestrel-trail-daypack-24l-model-08,Kestrel Trail Daypack 24L Model 08,329.73,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/marlow-trail-daypack-24l-model-09,Marlow Trail Daypack 24L Model 09,261.89,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/pro-edition-tamarack-trail-daypack-24l-model-10,Tamarack Trail Daypack 24L Model 10 Pro Edition,253.70,USD,2026-10-31
+summitsupply.example,,Ridgeline Merino Base Layer Top Model 11,176.67,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/northfork-merino-base-layer-top-model-12,Northfork Merino Base Layer Top Model 12,294.77,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/kestrel-merino-base-layer-top-model-13,Kestrel Merino Base Layer Top Model 13,287.29,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/marlow-merino-base-layer-top-model-14,Marlow Merino Base Layer Top Model 14,370.78,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/tamarack-merino-base-layer-top-model-15,Tamarack Merino Base Layer Top Model 15,346.02,USD,2026-10-31
+basecampgoods.example,,Ridgeline Packable Rain Shell Model 16,274.32,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/northfork-packable-rain-shell-model-17,Northfork Packable Rain Shell Model 17,376.68,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/kestrel-packable-rain-shell-model-18,Kestrel Packable Rain Shell Model 18,139.31,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/marlow-packable-rain-shell-model-19,Marlow Packable Rain Shell Model 19,66.91,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/pro-edition-tamarack-packable-rain-shell-model-20,Tamarack Packable Rain Shell Model 20 Pro Edition,93.87,USD,2026-10-31
+alpinegear.example,,Ridgeline Trekking Poles Pair Model 21,146.09,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/northfork-trekking-poles-pair-model-22,Northfork Trekking Poles Pair Model 22,150.48,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/kestrel-trekking-poles-pair-model-23,Kestrel Trekking Poles Pair Model 23,128.54,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/marlow-trekking-poles-pair-model-24,Marlow Trekking Poles Pair Model 24,181.41,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/tamarack-trekking-poles-pair-model-25,Tamarack Trekking Poles Pair Model 25,40.80,USD,2026-10-31
+trailhead-outfitters.example,,Ridgeline Headlamp 400 Lumen Model 26,258.29,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/northfork-headlamp-400-lumen-model-27,Northfork Headlamp 400 Lumen Model 27,162.62,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/kestrel-headlamp-400-lumen-model-28,Kestrel Headlamp 400 Lumen Model 28,368.97,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/marlow-headlamp-400-lumen-model-29,Marlow Headlamp 400 Lumen Model 29,160.81,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/pro-edition-tamarack-headlamp-400-lumen-model-30,Tamarack Headlamp 400 Lumen Model 30 Pro Edition,104.87,USD,2026-10-31
+summitsupply.example,,Ridgeline Camp Stove Compact Model 31,54.17,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/northfork-camp-stove-compact-model-32,Northfork Camp Stove Compact Model 32,117.00,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/kestrel-camp-stove-compact-model-33,Kestrel Camp Stove Compact Model 33,41.04,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/marlow-camp-stove-compact-model-34,Marlow Camp Stove Compact Model 34,82.10,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/tamarack-camp-stove-compact-model-35,Tamarack Camp Stove Compact Model 35,82.53,USD,2026-10-31
+basecampgoods.example,,Ridgeline Down Sleeping Bag 20F Model 36,147.77,USD,2026-10-31
+alpinegear.example,https://alpinegear.example/products/northfork-down-sleeping-bag-20f-model-37,Northfork Down Sleeping Bag 20F Model 37,365.22,USD,2026-10-31
+trailhead-outfitters.example,https://trailhead-outfitters.example/products/kestrel-down-sleeping-bag-20f-model-38,Kestrel Down Sleeping Bag 20F Model 38,206.07,USD,2026-10-31
+summitsupply.example,https://summitsupply.example/products/marlow-down-sleeping-bag-20f-model-39,Marlow Down Sleeping Bag 20F Model 39,171.47,USD,2026-10-31
+basecampgoods.example,https://basecampgoods.example/products/pro-edition-tamarack-down-sleeping-bag-20f-model-40,Tamarack Down Sleeping Bag 20F Model 40 Pro Edition,242.06,USD,2026-10-31

@@ -60,6 +60,7 @@ from typing import Any
 
 import httpx
 
+from .. import pricefeed
 from ..agents.arbiter import ArbiterAgent
 from ..agents.buyer import ArtifactStore, BuyerAgent
 from ..agents.seller import SellerAgent
@@ -958,11 +959,11 @@ RETURNS_MIN_ROWS = 5000
 
 
 def default_checkers() -> dict[str, Checker]:
-    return {"returns-dataset-2026q3": check_returns_dataset}
+    return {"returns-dataset-2026q3": check_returns_dataset, pricefeed.GOOD_ID: pricefeed.default_verifier()}
 
 
 def default_counters() -> dict[str, UnitCounter]:
-    return {"returns-dataset-2026q3": count_returns_units}
+    return {"returns-dataset-2026q3": count_returns_units, pricefeed.GOOD_ID: pricefeed.default_verifier().counter}
 
 
 def check_returns_dataset(artifact: Path, good_id: str) -> tuple[bool, str]:

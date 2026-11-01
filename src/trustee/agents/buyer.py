@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ..ledger import Ledger
 from ..llm import LLM
@@ -27,6 +27,13 @@ log = logging.getLogger(__name__)
 
 Checker = Callable[[Path, str], tuple[bool, str]]  # (artifact, good_id) -> (ok, detail)
 UnitCounter = Callable[[Path, str], tuple[int, int]]  # (artifact, good_id) -> (units_valid, units_total)
+
+
+def _run_checker(fn: Callable[..., Any], path: Path, contract: Contract) -> Any:
+    """Call a checker or counter. One that sets `needs_contract` also gets the contract (e.g. to seed a sample)."""
+    if getattr(fn, "needs_contract", False):
+        return fn(path, contract.good.good_id, contract=contract)
+    return fn(path, contract.good.good_id)
 
 
 @dataclass
@@ -155,17 +162,18 @@ class BuyerAgent(Negotiator):
         #    delivery at all.
         checker = self.checkers.get(contract.good.good_id)
         if checker is not None:
-            ok, detail = checker(received_path, contract.good.good_id)
+            ok, detail = _run_checker(checker, received_path, contract)
             evidence["checker"] = detail
             if not ok:
                 failures.append(detail)
+            self._annotate(checker, received_path, contract, evidence)
 
         # 3. contracts with a pro-rata term: count the valid units in the bytes that arrived, so the
         #    Trustee can price a partial settlement. Plain arithmetic by a registered counter, no LLM.
         counter = self.counters.get(contract.good.good_id)
         if failures and contract.partial is not None and counter is not None:
             try:
-                valid, total = counter(received_path, contract.good.good_id)
+                valid, total = _run_checker(counter, received_path, contract)
             except Exception:  # noqa: BLE001 - no counts means the ordinary reject path
                 log.warning("unit counter failed for %s", contract.good.good_id, exc_info=True)
             else:
@@ -189,6 +197,21 @@ class BuyerAgent(Negotiator):
         return attest
 
     # ------------------------------------------------------------ internals
+
+    def _annotate(self, checker: object, path: Path, contract: Contract, evidence: dict[str, str]) -> None:
+        """Checkers that measure against outside data (price feed vs Channel3) can add evidence and tape rows."""
+        hook = getattr(checker, "annotate", None)
+        if not callable(hook):
+            return
+        try:
+            extra, payloads = hook(path, contract)
+        except Exception:  # noqa: BLE001 - extra evidence must never break the verdict
+            log.warning("checker annotation failed for %s", contract.good.good_id, exc_info=True)
+            return
+        evidence.update(extra)
+        if self.ledger is not None:
+            for payload in payloads:
+                self.ledger.append(contract.deal_id, self.agent_id, "policy", **payload)
 
     def _summarize(self, notes: list[str]) -> str:
         joined = "; ".join(notes)

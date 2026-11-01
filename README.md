@@ -36,6 +36,9 @@ contract formed
 Contracts can opt in to pro-rata settlement (a rejected delivery pays for its valid share) and the sweeper can
 renew held authorizations after PayPal's 3-day honor period: see [docs/PARTIAL_CAPTURE.md](docs/PARTIAL_CAPTURE.md).
 
+A buyer can also check a delivered price feed against live market data from Channel3 before releasing the money (opt-in
+`pricefeed` scenarios, recorded fixtures when no key is set): see [docs/CHANNEL3.md](docs/CHANNEL3.md).
+
 The LLM proposes and explains; the policy layer is the only thing that can
 touch PayPal. Terminal states are immutable; webhook replays are idempotent
 no-ops — funds can never double-settle or strand.

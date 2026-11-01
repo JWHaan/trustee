@@ -47,6 +47,7 @@ from ..paypal import PayPalClient
 from ..platform import DealService, build_router
 from ..platform.reputation_routes import build_reputation_router
 from ..platform.service import operator_token_from_env
+from ..pricefeed import GOOD_ID as PRICEFEED_GOOD_ID
 from ..store import Store
 from .rows import to_row
 from .runner import MODES, DealRunner, RunResult
@@ -268,6 +269,12 @@ async def _sweep_loop(service: DealService, stop: asyncio.Event, interval: float
             log.exception("deadline sweep failed")
 
 
+def _listed(s: Any) -> bool:
+    if s.good.good_id == PRICEFEED_GOOD_ID:
+        return os.environ.get("ARENA_PRICEFEED_SCENARIO") == "1"
+    return s.partial is None or os.environ.get("ARENA_PARTIAL_SCENARIO") == "1"
+
+
 def create_app(
     ledger: Ledger | None = None,
     paypal: PayPalClient | None = None,
@@ -455,9 +462,10 @@ def create_app(
                     "flow": s.flow,
                     "instruction": s.instruction,
                 }
-                # `partial` is listed (and so shown in the UI) only with ARENA_PARTIAL_SCENARIO=1.
+                # `partial` is listed (and so shown in the UI) only with ARENA_PARTIAL_SCENARIO=1, the
+                # Channel3 price-feed scenarios only with ARENA_PRICEFEED_SCENARIO=1.
                 for s in load_scenarios().values()
-                if s.partial is None or os.environ.get("ARENA_PARTIAL_SCENARIO") == "1"
+                if _listed(s)
             ],
             "modes": list(MODES),
         }

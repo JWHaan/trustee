@@ -19,7 +19,15 @@ from ..rows import to_row
 from ..runner import DealRunner
 from ..scenario import get_scenario
 
-EXPECTED = {"honest": "SETTLED", "cheat": "VOIDED", "overreach": "SETTLED", "partial": "SETTLED"}
+EXPECTED = {
+    "honest": "SETTLED",
+    "cheat": "VOIDED",
+    "overreach": "SETTLED",
+    "partial": "SETTLED",
+    "pricefeed": "SETTLED",
+    "pricefeed-stale": "VOIDED",
+    "pricefeed-mixed": "SETTLED",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
