@@ -167,6 +167,76 @@
       "cheat": false,
       "transcript": "overreach",
       "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256"
+    },
+    {
+      "name": "pricefeed",
+      "title": "Price feed, market-checked",
+      "blurb": "Tidewater sells Northwind a competitor price feed. Before releasing the money, Northwind samples 20 rows (seeded by the signed contract), looks each up in Channel3 and compares prices. Every row is within tolerance, so Trustee captures.",
+      "good": {
+        "good_id": "competitor-price-feed-2026q4",
+        "description": "Competitor price feed, Q4 2026 (40 products, CSV), checked against live Channel3 offers",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: retailer, product_url, product_title, price, currency, observed_at",
+          "market check: 20 sampled rows priced within max(5%, $1) of live Channel3 offers"
+        ],
+        "deliverable_ref": "pricefeed-2026q4.csv",
+        "sha256": "f4447f1e87f4d715a6e8b78dfac0f83c56f18b069cdfe7f7cd55ce92f1c4fca3"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest"
+    },
+    {
+      "name": "pricefeed-stale",
+      "title": "Stale price feed",
+      "blurb": "The feed matches the hash Tidewater signed, but its prices are months old and some products never existed. The Channel3 check fails on the sampled rows, the arbiter cites the market-check clause and the escrow is voided.",
+      "good": {
+        "good_id": "competitor-price-feed-2026q4",
+        "description": "Competitor price feed, Q4 2026 (40 products, CSV), checked against live Channel3 offers",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: retailer, product_url, product_title, price, currency, observed_at",
+          "market check: 20 sampled rows priced within max(5%, $1) of live Channel3 offers"
+        ],
+        "deliverable_ref": "pricefeed-2026q4-stale.csv",
+        "sha256": "54346efb8659d81c507c5ffb129d5a9b9c2841e5c4247a69dc183b8943fe08ca"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest"
+    },
+    {
+      "name": "pricefeed-mixed",
+      "title": "Partly valid price feed",
+      "blurb": "Eight of the feed's 40 rows are wrong or invented. The sampled rows fail the Channel3 check, and because the contract carries a signed pro-rata term, Trustee captures the share of sampled rows that checked out and releases the rest.",
+      "good": {
+        "good_id": "competitor-price-feed-2026q4",
+        "description": "Competitor price feed, Q4 2026 (40 products, CSV), checked against live Channel3 offers",
+        "category": "data",
+        "acceptance_criteria": [
+          "sha256 matches contract",
+          "schema: retailer, product_url, product_title, price, currency, observed_at",
+          "market check: 20 sampled rows priced within max(5%, $1) of live Channel3 offers"
+        ],
+        "deliverable_ref": "pricefeed-2026q4-mixed.csv",
+        "sha256": "d90938a54d7aa56ad359a55ccc625d3fc6f2dd4aa26821c849b956cc591775cb"
+      },
+      "partial": {
+        "basis": "units",
+        "min_fraction": "0.5"
+      },
+      "ask": "180.00",
+      "floor": "150.00",
+      "budget": "165.00",
+      "cheat": false,
+      "transcript": "honest"
     }
   ]
 }
