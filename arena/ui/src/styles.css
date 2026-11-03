@@ -645,9 +645,10 @@ main {
   min-height: 0;
 }
 
+/* Money and the intent mandate take what they need; the transcript fills the rest. */
 .col-left {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   border-right: 1px solid var(--line);
@@ -682,7 +683,13 @@ main {
 }
 
 .money-panel {
+  flex: none;
   border-bottom: 1px solid var(--line);
+}
+
+.feed-panel {
+  flex: 1 1 0;
+  min-height: 140px;
 }
 
 /* ------------------------------------------------------------ money panel */
@@ -1504,20 +1511,57 @@ main {
 
 /* ------------------------------------------------- intent mandate (human-not-present) */
 
-.policy {
-  margin: 0 var(--s4) var(--s3);
-  padding: var(--s3) var(--s4);
-  border: 1px solid var(--line, rgba(140, 150, 165, 0.25));
-  border-radius: 10px;
-  background: rgba(125, 180, 255, 0.04);
+/* An open checklist gives up height before the transcript does, and scrolls. */
+.policy-panel {
+  flex: 0 1 auto;
+  border-bottom: 1px solid var(--line);
+  background: rgba(125, 180, 255, 0.03);
+}
+.policy-head {
+  flex: none;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.policy-head > span:first-child,
+.policy-head .count {
+  flex: none;
+  white-space: nowrap;
+}
+.policy-head:hover {
+  background: rgba(125, 180, 255, 0.05);
+}
+.policy-head .policy-verdict {
+  min-width: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.policy-head .vtext {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.policy-head svg.flip {
+  transform: rotate(180deg);
+}
+.policy-body {
+  min-height: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--s2) var(--s4) var(--s3);
 }
 .policy-consent {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  margin: 6px 0 8px;
+  margin: 0 0 8px;
   font-size: 12.5px;
+  line-height: 1.45;
+}
+.policy-consent svg {
+  vertical-align: -2px;
+  margin-right: 2px;
 }
 .policy-consent em {
   color: var(--dim, #8c96a5);
@@ -1555,12 +1599,14 @@ main {
   white-space: nowrap;
 }
 .policy-verdict {
-  margin-top: 8px;
   display: inline-flex;
   gap: 6px;
   align-items: center;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 12px;
+}
+.policy-verdict svg {
+  flex: none;
 }
 .policy-verdict.good {
   color: var(--green);

@@ -205,8 +205,6 @@ export default function App() {
         <Timeline rows={rows} snap={snap} running={running} />
       </section>
 
-      <PolicyChecklist rows={rows} />
-
       {error ? (
         <div className="toast" role="alert">
           <span>
@@ -226,6 +224,7 @@ export default function App() {
             </div>
             <MoneyPanel rows={rows} snap={snap} running={running} health={health} />
           </section>
+          <PolicyChecklist rows={rows} />
           <section className="panel feed-panel" aria-label="transcript">
             <div className="panel-head">
               <span>Negotiation &amp; settlement</span>
