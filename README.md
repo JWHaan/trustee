@@ -236,8 +236,9 @@ Call it from Python:
 
 ```python
 from trustee.a2a import A2AClient
+
 c = A2AClient("http://127.0.0.1:8000")
-task = c.call_skill("open-escrow", signed_contract_dict)   # then record-delivery / attest-delivery with task_id=task.id
+task = c.call_skill("open-escrow", signed_contract_dict)  # then record-delivery / attest-delivery with task_id=task.id
 ```
 
 ### The A2A network: three agents

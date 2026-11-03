@@ -112,7 +112,7 @@ state changed. Fixed with an `on_transition` callback fired inside
 ### 2.3 `Contract.from_accept` swaps the parties when the seller accepts
 
 ```python
-buyer=accept.sender   # only true when the buyer is the one accepting
+buyer = accept.sender  # only true when the buyer is the one accepting
 ```
 
 The seller's `respond_to` accepts as soon as the price is at or above floor —
