@@ -15,13 +15,19 @@ import { ApprovalBanner } from "./Approval";
 import { Header } from "./Header";
 import { LedgerGrid } from "./LedgerGrid";
 import { MoneyPanel } from "./MoneyPanel";
-import { ScenarioPicker } from "./ScenarioPicker";
+import { ScenarioPicker, scenarioStory } from "./ScenarioPicker";
 import { PolicyChecklist } from "./Policy";
 import { Timeline } from "./Timeline";
 import { Transcript } from "./Transcript";
 import { pendingApproval } from "./describe";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// `?mode=scripted` makes the auto-started run a replay too: no model or PayPal call while demoing or testing.
+function initialMode(): Mode {
+  const m = new URLSearchParams(window.location.search).get("mode");
+  return m === "live" || m === "scripted" ? m : "auto";
+}
 
 export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -30,7 +36,7 @@ export default function App() {
   const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
   const [warming, setWarming] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
-  const [mode, setMode] = useState<Mode>("auto");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [current, setCurrent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -157,10 +163,10 @@ export default function App() {
         <div className="clause receipt-line">
           {snap.receipt_verified ? (
             <span className="badge good">
-              <Check size={11} strokeWidth={3} aria-hidden="true" /> receipt verified
+              <Check size={11} strokeWidth={3} aria-hidden="true" /> Receipt verified
             </span>
           ) : (
-            <span className="badge bad">receipt not verified</span>
+            <span className="badge bad">Receipt not verified</span>
           )}{" "}
           {snap.human_present === false ? "paid under the intent mandate, no human click" : "approved by a human"} ·{" "}
           <a href={`/api/runs/${snap.run_id}/receipt`} target="_blank" rel="noopener noreferrer">
@@ -171,6 +177,26 @@ export default function App() {
     </div>
   ) : null;
 
+  const status = running
+    ? { text: "Running", tone: "run" }
+    : verdict === "SETTLED"
+      ? { text: "Settled", tone: "good" }
+      : verdict === "REJECTED"
+        ? { text: "Rejected", tone: "bad" }
+        : verdict === "VOIDED"
+          ? { text: unapproved ? "Voided" : "Refunded", tone: "refund" }
+          : snap
+            ? { text: (snap.outcome ?? snap.state).replace(/_/g, " "), tone: "idle" }
+            : { text: "Waiting for a run", tone: "idle" };
+  const model =
+    snap?.fallback_from === "live"
+      ? { text: "Live model failed, replayed the script", tone: "warn" }
+      : snap?.effective_mode === "live"
+        ? { text: "Live model", tone: "" }
+        : snap?.effective_mode === "scripted"
+          ? { text: "Scripted replay", tone: "" }
+          : null;
+
   const footer = (
     <>
       {verdictCard}
@@ -180,35 +206,40 @@ export default function App() {
 
   return (
     <div className="shell">
-      <Header health={health} snap={snap} rows={rows} running={running} />
+      <Header health={health} mode={mode} onMode={setMode} running={running} />
       <ScenarioPicker
         scenarios={scenarios}
         current={current}
         running={running}
         warming={warming}
-        mode={mode}
-        onMode={setMode}
         onRun={(name) => void run(name)}
       />
 
-      <section className="timeline-wrap" aria-label="deal progress">
-        <div className="section-bar">
-          <span>Deal timeline</span>
-          <span className="meta">
-            {snap
-              ? `deal ${snap.deal_id?.slice(-8) ?? ""} · ${snap.turns} negotiation moves`
-              : running
-                ? "live"
-                : "waiting for a run"}
-          </span>
+      <section className="deal" aria-label="The deal">
+        <div className="deal-money">
+          <MoneyPanel rows={rows} snap={snap} running={running} story={scenarioStory(scenarios, current)} />
         </div>
-        <Timeline rows={rows} snap={snap} running={running} />
+        <div className="deal-steps">
+          <div className="steps-head">
+            <span className={`run-status ${status.tone}`} role="status">
+              <span className="run-dot" aria-hidden="true" />
+              {status.text}
+            </span>
+            {model ? <span className={`run-model ${model.tone}`}>{model.text}</span> : null}
+            {snap?.deal_id ? (
+              <span className="run-meta">
+                Deal <code>{snap.deal_id.slice(-8)}</code>, {snap.turns} negotiation moves
+              </span>
+            ) : null}
+          </div>
+          <Timeline rows={rows} snap={snap} running={running} />
+        </div>
       </section>
 
       {error ? (
         <div className="toast" role="alert">
           <span>
-            <b>Run failed.</b> {error}
+            <b>The run failed.</b> {error} Pick a scenario to try again.
           </span>
           <button type="button" className="icon" onClick={() => setError(null)} aria-label="Dismiss error">
             <X size={14} aria-hidden="true" />
@@ -218,26 +249,20 @@ export default function App() {
 
       <main>
         <div className="col-left">
-          <section className="panel money-panel" aria-label="money">
-            <div className="panel-head">
-              <span>Where the money is</span>
-            </div>
-            <MoneyPanel rows={rows} snap={snap} running={running} health={health} />
-          </section>
           <PolicyChecklist rows={rows} />
-          <section className="panel feed-panel" aria-label="transcript">
+          <section className="panel feed-panel" aria-label="Negotiation and settlement">
             <div className="panel-head">
-              <span>Negotiation &amp; settlement</span>
+              <h2>Negotiation and settlement</h2>
               <span className="count">{rows.filter((r) => r.kind !== "note").length} events</span>
             </div>
             <Transcript rows={rows} running={running} snap={snap} footer={footer} />
           </section>
         </div>
 
-        <section className="panel ledger-panel" aria-label="ledger tape">
+        <section className="panel ledger-panel" aria-label="Ledger tape">
           <div className="panel-head">
-            <span>Ledger tape</span>
-            <span className="count">append-only</span>
+            <h2>Ledger tape</h2>
+            <span className="count">Append-only, read from the server</span>
           </div>
           <LedgerGrid rows={rows} />
         </section>

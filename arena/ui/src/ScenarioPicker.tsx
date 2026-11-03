@@ -1,6 +1,6 @@
 import { Gavel, Handshake, KeyRound, Loader, Network, Server, UserCheck } from "lucide-react";
 import type { ReactNode } from "react";
-import type { Mode, ScenarioInfo } from "./api";
+import type { ScenarioInfo } from "./api";
 
 interface Meta {
   icon: ReactNode;
@@ -14,52 +14,46 @@ interface Meta {
 const META: Record<string, Meta> = {
   honest: {
     short: "Honest seller",
-    icon: <Handshake size={18} aria-hidden="true" />,
+    icon: <Handshake size={16} aria-hidden="true" />,
     blurb: "Ships the dataset Northwind paid for; the check passes.",
     outcome: "Settles",
     tone: "good",
   },
   cheat: {
     short: "Cheating seller",
-    icon: <Gavel size={18} aria-hidden="true" />,
+    icon: <Gavel size={16} aria-hidden="true" />,
     blurb: "Ships junk under the right file name; the hash fails.",
     outcome: "Refunds",
     tone: "refund",
   },
   forged: {
     short: "Impostor seller",
-    icon: <KeyRound size={18} aria-hidden="true" />,
+    icon: <KeyRound size={16} aria-hidden="true" />,
     blurb: "An impostor signs as Tidewater; the signature is refused.",
     outcome: "Rejected before PayPal",
     tone: "bad",
   },
   outside: {
     short: "Outside agents (/v1)",
-    icon: <Server size={18} aria-hidden="true" />,
+    icon: <Server size={16} aria-hidden="true" />,
     blurb: "Two outside agents settle through the public /v1 API.",
     outcome: "Settles via API",
     tone: "good",
   },
   overreach: {
     short: "Agent over-reaches",
-    icon: <UserCheck size={18} aria-hidden="true" />,
+    icon: <UserCheck size={16} aria-hidden="true" />,
     blurb: "The seller will not go below $190 but the human said $175 at most; the agent cannot pay alone.",
     outcome: "Steps up to a human",
     tone: "refund",
   },
   a2a: {
     short: "Three A2A agents",
-    icon: <Network size={18} aria-hidden="true" />,
+    icon: <Network size={16} aria-hidden="true" />,
     blurb: "Northwind and Tidewater are A2A agents that find each other by Agent Card; Trustee holds the money.",
     outcome: "Settles over A2A",
     tone: "good",
   },
-};
-
-const MODE_LABEL: Record<Mode, string> = {
-  auto: "Auto (live, else scripted)",
-  live: "Live model only",
-  scripted: "Scripted replay",
 };
 
 interface Props {
@@ -67,38 +61,26 @@ interface Props {
   current: string | null;
   running: boolean;
   warming: boolean;
-  mode: Mode;
-  onMode: (m: Mode) => void;
   onRun: (name: string) => void;
 }
 
-export function ScenarioPicker({ scenarios, current, running, warming, mode, onMode, onRun }: Props) {
-  return (
-    <section className="picker" aria-label="scenarios">
-      <div className="picker-head">
-        <p>
-          <b>Demo:</b> Northwind Outfitters&apos; planning agent buys a Q3 returns dataset from Tidewater Data
-          Co.&apos;s sales agent. Choose a seller and watch where the money goes.
-        </p>
-        <label className="modesel">
-          <span>Model</span>
-          <select value={mode} onChange={(e) => onMode(e.target.value as Mode)} disabled={running}>
-            {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABEL[m]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+/** The selected scenario's one-line story, shown above the money rail. */
+export function scenarioStory(scenarios: ScenarioInfo[], name: string | null): { title: string; blurb: string } | null {
+  const s = scenarios.find((x) => x.name === name);
+  if (!s) return null;
+  const meta = META[s.name];
+  return { title: meta?.short ?? s.title, blurb: meta?.blurb ?? s.blurb };
+}
 
+export function ScenarioPicker({ scenarios, current, running, warming, onRun }: Props) {
+  return (
+    <nav className="picker" aria-label="Choose a seller to run">
       {scenarios.length === 0 ? (
-        <div className="cards" aria-busy="true">
+        <div className="tabs" aria-busy="true">
           {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="card skeleton" aria-hidden="true">
-              <span className="sk w40" />
-              <span className="sk w90" />
+            <div key={i} className="tab skeleton" aria-hidden="true">
               <span className="sk w60" />
+              <span className="sk w40" />
             </div>
           ))}
           {warming ? (
@@ -109,7 +91,7 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
           ) : null}
         </div>
       ) : (
-        <div className="cards">
+        <div className="tabs">
           {scenarios.map((s) => {
             const meta = META[s.name];
             const selected = current === s.name;
@@ -118,25 +100,31 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
               <button
                 key={s.name}
                 type="button"
-                className={`card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
+                className={`tab ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
                 aria-pressed={selected}
+                aria-describedby={`blurb-${s.name}`}
                 onClick={() => onRun(s.name)}
                 disabled={running}
                 title={`${s.title}: ${meta?.blurb ?? s.blurb}`}
               >
-                <span className="card-top">
-                  <span className={`card-icon ${meta?.tone ?? "good"}`}>{meta?.icon}</span>
-                  <span className="card-head">
-                    <span className="card-title">{meta?.short ?? s.title}</span>
-                    <span className={`outcome ${meta?.tone ?? "good"}`}>{busy ? "running…" : meta?.outcome}</span>
-                  </span>
+                <span className={`tab-icon ${meta?.tone ?? "good"}`}>{meta?.icon}</span>
+                <span className="tab-text">
+                  <span className="tab-title">{meta?.short ?? s.title}</span>
+                  <span className={`outcome ${meta?.tone ?? "good"}`}>{busy ? "Running…" : meta?.outcome}</span>
                 </span>
-                <span className="card-blurb">{meta?.blurb ?? s.blurb}</span>
               </button>
             );
           })}
+          {/* Referenced by aria-describedby; hidden content still counts as a description. */}
+          <div hidden>
+            {scenarios.map((s) => (
+              <span key={s.name} id={`blurb-${s.name}`}>
+                {META[s.name]?.blurb ?? s.blurb}
+              </span>
+            ))}
+          </div>
         </div>
       )}
-    </section>
+    </nav>
   );
 }

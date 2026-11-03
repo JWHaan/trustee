@@ -37,7 +37,7 @@ export function PolicyChecklist({ rows }: { rows: Row[] }) {
     p.authority === "intent"
       ? { icon: <ShieldCheck size={15} aria-hidden="true" />, text: "Paid with no human click", tone: "good" }
       : p.authority === "stepup"
-        ? { icon: <UserCheck size={15} aria-hidden="true" />, text: "Outside the instruction — a human approves", tone: "warn" }
+        ? { icon: <UserCheck size={15} aria-hidden="true" />, text: "Outside the instruction: a human approves", tone: "warn" }
         : p.decision?.result === "reject"
           ? { icon: <X size={15} aria-hidden="true" />, text: "Refused by the intent mandate", tone: "bad" }
           : { icon: <FileSignature size={15} aria-hidden="true" />, text: "Waiting for the contract", tone: "idle" };

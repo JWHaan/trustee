@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { ArrowRight, Check, Copy } from "lucide-react";
-import type { Health, Row, Snapshot } from "./api";
-import { deriveMoney, derivePolicy, type MoneyPhase } from "./derive";
+import { Check, Copy } from "lucide-react";
+import type { Row, Snapshot } from "./api";
+import { deriveMoney, type MoneyPhase } from "./derive";
 import { money } from "./describe";
 
 const POS: Record<MoneyPhase, number> = {
@@ -27,7 +27,7 @@ function CopyId({ label, value }: { label: string; value: string }) {
     <span className="idchip">
       <span className="idk">{label}</span>
       <code title={value}>{value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value}</code>
-      <button type="button" className="icon" onClick={copy} aria-label={`Copy ${label} ${value}`}>
+      <button type="button" className="icon" onClick={copy} aria-label={`Copy ${label} ID`}>
         {done ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
       </button>
     </span>
@@ -38,14 +38,14 @@ interface Props {
   rows: Row[];
   snap: Snapshot | null;
   running: boolean;
-  health: Health | null;
+  /** The selected scenario in one line, so the rail says who is buying what. */
+  story: { title: string; blurb: string } | null;
 }
 
-export function MoneyPanel({ rows, snap, running, health }: Props) {
+export function MoneyPanel({ rows, snap, running, story }: Props) {
   const m = deriveMoney(rows, snap, running);
   const amt = m.amount ? money(m.amount) : "";
   const pos = POS[m.phase];
-  const authority = derivePolicy(rows).authority;
 
   const buyer: Record<MoneyPhase, string> = {
     idle: "negotiating",
@@ -75,45 +75,59 @@ export function MoneyPanel({ rows, snap, running, health }: Props) {
     blocked: "not paid",
   };
 
-  const env = !health
-    ? "Checking PayPal mode…"
-    : health.paypal === "sandbox"
-      ? "PayPal sandbox: test accounts, not real money"
-      : "Dry-run: no PayPal call is made";
-
-  const slot = (i: number, name: string, role: string, line: string) => (
-    <div className={`slot ${pos === i ? "has" : ""} ${i === 1 ? "mid" : ""}`}>
-      <div className="slot-role">{role}</div>
-      <div className="slot-name">{name}</div>
-      <div className="slot-line">{line}</div>
-    </div>
-  );
+  const parties: [string, string, string][] = [
+    ["Buyer agent", "Northwind Outfitters", buyer[m.phase]],
+    ["Escrow", "Held at PayPal", escrow[m.phase]],
+    ["Seller agent", "Tidewater Data Co.", seller[m.phase]],
+  ];
 
   return (
-    <div className={`money phase-${m.phase}`} aria-label="where the money is">
-      <div className="slots">
-        {slot(0, "Northwind Outfitters", "Buyer", buyer[m.phase])}
-        {slot(1, "Held at PayPal", "Escrow", escrow[m.phase])}
-        {slot(2, "Tidewater Data Co.", "Seller", seller[m.phase])}
+    <div className={`money phase-${m.phase}`}>
+      {story ? (
+        <p className="deal-story">
+          <b>{story.title}.</b> {story.blurb}
+        </p>
+      ) : null}
+      <div className="parties names">
+        {parties.map(([role, name], i) => (
+          <div key={role} className={`party ${pos === i ? "has" : ""}`}>
+            <span className="party-role">{role}</span>
+            <span className="party-name">{name}</span>
+          </div>
+        ))}
       </div>
       <div className="rail" aria-hidden="true">
         <span className="rail-line" />
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={`rail-node ${pos === i ? "has" : ""}`} style={{ left: `${[16.66, 50, 83.33][i]}%` }} />
+        ))}
         <span className="coin" style={{ left: `${[16.66, 50, 83.33][pos]}%` }}>
           {amt || "$—"}
         </span>
+      </div>
+      <div className="parties lines">
+        {parties.map(([role, , line], i) => (
+          <span key={role} className={`party-line ${pos === i ? "has" : ""}`}>
+            {line}
+          </span>
+        ))}
       </div>
       <p className="sr-only" aria-live="polite">
         {amt ? `${amt}: ` : ""}
         {m.phase === "held" ? "held at PayPal" : m.phase === "settled" ? "paid to seller" : m.phase === "refunded" ? "refunded to buyer" : m.phase}
       </p>
+      {/* Always one line tall, so the panels below do not jump when the PayPal ids arrive. */}
       <div className="money-foot">
-        <span className="env">
-          <ArrowRight size={12} aria-hidden="true" /> {env}
-        </span>
-        {authority === "intent" ? <span className="env auth">Authorized by intent mandate, no human click</span> : null}
-        {authority === "stepup" ? <span className="env auth">Outside the mandate: human approval</span> : null}
-        <CopyId label="order" value={m.orderId} />
-        <CopyId label="authorization" value={m.authId} />
+        {m.orderId || m.authId ? (
+          <>
+            <CopyId label="PayPal order" value={m.orderId} />
+            <CopyId label="Authorization" value={m.authId} />
+          </>
+        ) : (
+          <span className="idk">
+            {m.phase === "blocked" ? "No PayPal order: Trustee never called PayPal" : "The PayPal order appears once funds are held"}
+          </span>
+        )}
       </div>
     </div>
   );
