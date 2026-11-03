@@ -31,13 +31,14 @@ jobs:
       APIMATIC_CLI_VERSION: "2.0.0"
       SPEC_SOURCE: openapi/trustee-v1.json
       SPEC_TARGET: apimatic/src/spec/trustee-v1.json
-      SDK_ROOT: ${{ runner.temp }}/sdk
     steps:
       - name: Check for the APIMatic key
         id: key
         env:
           APIMATIC_API_KEY: ${{ secrets.APIMATIC_API_KEY }}
         run: |
+          # The runner context is not available in job-level env, so SDK_ROOT is set here.
+          echo "SDK_ROOT=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
           if [ -z "$APIMATIC_API_KEY" ]; then
             echo "::notice title=APIMatic SDKs skipped::Set the APIMATIC_API_KEY secret to generate SDKs. See docs/SDKS.md."
             echo "ready=false" >> "$GITHUB_OUTPUT"
