@@ -109,7 +109,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       detail: mandate
         ? mandateOk
           ? policy.rules.length
-            ? `both within limits · intent ${policy.passed}/${policy.rules.length} rules`
+            ? `within limits · ${policy.passed}/${policy.rules.length} rules`
             : "both within limits"
           : "blocked"
         : "",
@@ -118,7 +118,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       key: "funds",
       label:
         policy.authority === "intent" && authorize
-          ? "Paid under intent mandate — no human click"
+          ? "Held, no human click"
           : (policy.authority === "stepup" || policy.authority === "human") && authorize && !waiting
             ? "Approved by human"
             : "Funds held",
@@ -130,7 +130,9 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
           : authorize
             ? policy.authority === "stepup"
               ? "outside the signed instruction"
-              : "at PayPal"
+              : policy.authority === "intent"
+                ? "intent mandate · at PayPal"
+                : "at PayPal"
             : "",
     },
     {

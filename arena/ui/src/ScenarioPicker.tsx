@@ -1,58 +1,58 @@
 import { Gavel, Handshake, KeyRound, Loader, Network, Server, UserCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Mode, ScenarioInfo } from "./api";
-import { money } from "./describe";
 
 interface Meta {
   icon: ReactNode;
+  /** Fits one card in a six-across row; the server's longer title stays in the tooltip. */
+  short: string;
   blurb: string;
   outcome: string;
   tone: "good" | "refund" | "bad";
-  who: string;
 }
 
 const META: Record<string, Meta> = {
   honest: {
+    short: "Honest seller",
     icon: <Handshake size={18} aria-hidden="true" />,
     blurb: "Ships the dataset Northwind paid for; the check passes.",
     outcome: "Settles",
     tone: "good",
-    who: "Northwind + Tidewater",
   },
   cheat: {
+    short: "Cheating seller",
     icon: <Gavel size={18} aria-hidden="true" />,
     blurb: "Ships junk under the right file name; the hash fails.",
     outcome: "Refunds",
     tone: "refund",
-    who: "Northwind + Tidewater + arbiter",
   },
   forged: {
+    short: "Impostor seller",
     icon: <KeyRound size={18} aria-hidden="true" />,
     blurb: "An impostor signs as Tidewater; the signature is refused.",
     outcome: "Rejected before PayPal",
     tone: "bad",
-    who: "Northwind + impostor",
   },
   outside: {
+    short: "Outside agents (/v1)",
     icon: <Server size={18} aria-hidden="true" />,
     blurb: "Two outside agents settle through the public /v1 API.",
     outcome: "Settles via API",
     tone: "good",
-    who: "External agents over HTTP",
   },
   overreach: {
+    short: "Agent over-reaches",
     icon: <UserCheck size={18} aria-hidden="true" />,
     blurb: "The seller will not go below $190 but the human said $175 at most; the agent cannot pay alone.",
     outcome: "Steps up to a human",
     tone: "refund",
-    who: "Northwind + Tidewater + human approval",
   },
   a2a: {
+    short: "Three A2A agents",
     icon: <Network size={18} aria-hidden="true" />,
     blurb: "Northwind and Tidewater are A2A agents that find each other by Agent Card; Trustee holds the money.",
     outcome: "Settles over A2A",
     tone: "good",
-    who: "Northwind + Tidewater + Trustee over A2A",
   },
 };
 
@@ -94,7 +94,7 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
 
       {scenarios.length === 0 ? (
         <div className="cards" aria-busy="true">
-          {[0, 1, 2, 3].map((i) => (
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="card skeleton" aria-hidden="true">
               <span className="sk w40" />
               <span className="sk w90" />
@@ -122,18 +122,16 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
                 aria-pressed={selected}
                 onClick={() => onRun(s.name)}
                 disabled={running}
-                title={s.blurb}
+                title={`${s.title}: ${meta?.blurb ?? s.blurb}`}
               >
                 <span className="card-top">
                   <span className={`card-icon ${meta?.tone ?? "good"}`}>{meta?.icon}</span>
-                  <span className="card-title">{s.title}</span>
-                  <span className={`outcome ${meta?.tone ?? "good"}`}>{busy ? "running…" : meta?.outcome}</span>
+                  <span className="card-head">
+                    <span className="card-title">{meta?.short ?? s.title}</span>
+                    <span className={`outcome ${meta?.tone ?? "good"}`}>{busy ? "running…" : meta?.outcome}</span>
+                  </span>
                 </span>
                 <span className="card-blurb">{meta?.blurb ?? s.blurb}</span>
-                <span className="card-foot">
-                  <span>{meta?.who}</span>
-                  <span className="terms">ask {money(s.ask)}</span>
-                </span>
               </button>
             );
           })}

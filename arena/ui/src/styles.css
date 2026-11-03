@@ -356,10 +356,22 @@ select:disabled {
   cursor: not-allowed;
 }
 
+/* Six scenarios, one row on a laptop screen, so the deal below keeps its height. */
 .cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--s3);
+}
+/* Three across on a smaller laptop; the blurb moves to the tooltip so two rows stay short. */
+@media (max-width: 1200px) {
+  .cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1200px) and (min-width: 901px) {
+  .cards .card-blurb {
+    display: none;
+  }
 }
 
 .card {
@@ -367,7 +379,7 @@ select:disabled {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 6px;
+  gap: var(--s2);
   text-align: left;
   padding: var(--s3);
   background: var(--panel);
@@ -397,8 +409,15 @@ select:disabled {
 
 .card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--s2);
+  min-width: 0;
+}
+.card-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s1);
   min-width: 0;
 }
 .card-icon {
@@ -420,7 +439,9 @@ select:disabled {
   color: var(--red);
 }
 .card-title {
+  max-width: 100%;
   font-size: 13.5px;
+  line-height: 1.3;
   font-weight: 650;
   color: var(--ink);
   overflow: hidden;
@@ -429,7 +450,6 @@ select:disabled {
   min-width: 0;
 }
 .outcome {
-  margin-left: auto;
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
@@ -450,25 +470,14 @@ select:disabled {
   background: rgba(255, 123, 123, 0.14);
 }
 .card-blurb {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
-}
-.card-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--s2);
-  font-size: 11.5px;
-  color: var(--dim);
-  min-width: 0;
-}
-.card-foot span:first-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card-foot .terms {
-  white-space: nowrap;
 }
 
 .card.skeleton {
@@ -650,6 +659,7 @@ main {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
   min-width: 0;
   border-right: 1px solid var(--line);
 }
@@ -1511,9 +1521,9 @@ main {
 
 /* ------------------------------------------------- intent mandate (human-not-present) */
 
-/* An open checklist gives up height before the transcript does, and scrolls. */
+/* Never shrinks: an open checklist scrolls inside its own max-height, and the column scrolls past that. */
 .policy-panel {
-  flex: 0 1 auto;
+  flex: none;
   border-bottom: 1px solid var(--line);
   background: rgba(125, 180, 255, 0.03);
 }
@@ -1549,7 +1559,6 @@ main {
   transform: rotate(180deg);
 }
 .policy-body {
-  min-height: 0;
   max-height: 220px;
   overflow-y: auto;
   padding: var(--s2) var(--s4) var(--s3);

@@ -35,7 +35,7 @@ export function PolicyChecklist({ rows }: { rows: Row[] }) {
   const open = toggled ?? p.failed > 0;
   const verdict =
     p.authority === "intent"
-      ? { icon: <ShieldCheck size={15} aria-hidden="true" />, text: "Paid under the intent mandate — no human click", tone: "good" }
+      ? { icon: <ShieldCheck size={15} aria-hidden="true" />, text: "Paid with no human click", tone: "good" }
       : p.authority === "stepup"
         ? { icon: <UserCheck size={15} aria-hidden="true" />, text: "Outside the instruction — a human approves", tone: "warn" }
         : p.decision?.result === "reject"

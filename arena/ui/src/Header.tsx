@@ -54,7 +54,7 @@ export function Header({ health, snap, rows, running }: Props) {
       ? { text: `${ok} signatures verified`, cls: "ok" }
       : { text: "signatures: none yet", cls: "idle" };
   const model = chipTone(snap);
-  const status = running ? "running" : snap?.outcome ?? snap?.state ?? "idle";
+  const status = (running ? "running" : snap?.outcome ?? snap?.state ?? "idle").replace(/_/g, " ");
 
   return (
     <header className="top">
