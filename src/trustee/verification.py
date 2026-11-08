@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .criteria import check_csv, checkable_csv
 from .protocol import Contract, Delivery
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,9 @@ class DeliveryVerifier:
         hash_ok = expected is not None and signed == expected
         checks: list[dict[str, Any]] = []
         checker = self.checkers.get(contract.good.good_id)
+        if checker is None and checkable_csv(contract):
+            # No checker made for this good: run the contract's own schema and row criteria on the file.
+            checker = check_csv
         if checker is not None:
             try:
                 ok, detail = _call(checker, path, contract)
