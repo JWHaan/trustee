@@ -28,6 +28,10 @@ Reliability rules for the money path:
     and, if all pass, holds the funds with no payer click. A hard violation (forged, revoked, expired, wrong seller)
     refuses the deal before PayPal; a soft overrun (price above the intent cap, unknown item, ...) falls back to the
     human-present approval flow with the failing rule explained. The capture-time re-check covers the intent too;
+  * write before the money moves: before every PayPal call that can hold or move funds, `pending_money` records
+    the operation and its request id and `before_money` (set by a durable host) must persist it or raise. If it
+    raises, no PayPal call is made. A deal whose escrow-opening call was recorded but never answered (a crash in
+    between) is finished by `tick()` with the same request id;
   * funds are never stranded: `tick()` voids past the deal deadline, resolves
     before the PayPal authorization expires, and captures an upheld dispute that
     no human overrode within the dispute window; `resolve_dispute()` is the
@@ -39,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -52,6 +57,7 @@ from ..partial import PartialSettlement, compute_partial
 from ..paypal import EscrowOrder, PayPalClient, PayPalError
 from ..protocol import Attest, Contract, Delivery, verify_signature
 from ..state import Deal, DealState, IllegalTransition
+from ..verification import Verification
 from .arbiter import Judge, Ruling
 
 log = logging.getLogger(__name__)
@@ -61,6 +67,8 @@ AUTH_VALIDITY = timedelta(days=29)
 # A reauthorization is allowed once the 3-day honor period of the current authorization is over.
 HONOR_PERIOD = timedelta(days=3)
 REAUTH_RETRY_BACKOFF = timedelta(hours=1)
+# How many times the sweeper re-issues an escrow-opening call that was recorded but never answered.
+MAX_RESUME_ATTEMPTS = 5
 
 
 def paypal_issue(exc: PayPalError) -> str:
@@ -138,6 +146,15 @@ class Trustee:
         self.reauthorized_at: datetime | None = None
         self.reauth_count = 0
         self._reauth_retry_after: datetime | None = None  # in memory only: throttles retries after a failure
+        # Write-ahead for money calls. `pending_money` is the PayPal operation about to run (op, request id, when);
+        # it is part of the snapshot, so a durable host has it on disk before the call. `before_money(contract)` is
+        # that host's hook: it must make the snapshot durable or raise, and when it raises no PayPal call is made.
+        self.pending_money: dict[str, Any] | None = None
+        self.before_money: Callable[[Contract], None] | None = None
+        # Trustee's own check of the delivered file (trustee.verification). `verifier` is set by a host that holds the
+        # seller's file; it returns None when there is no file to check, and the buyer's evidence is then all there is.
+        self.verifier: Callable[[Contract, Delivery], Verification | None] | None = None
+        self._verification: dict[str, Any] | None = None
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------ public API
@@ -203,6 +220,19 @@ class Trustee:
                 )
         self.deal.transition(DealState.CONTRACTED, "contract accepted")
         rid = self._request_id("authorize-create")
+        funding = None
+        if vault_id and intent is not None:
+            # The vault id itself is a secret and is never written down; the funding ref finds it again on resume.
+            funding = {"principal": intent.principal, "funding_ref": intent.funding_ref}
+        blocked = self._record_intent(contract, "authorize-create", rid, funding=funding)
+        if blocked is not None:
+            return blocked
+        return self._open_escrow(contract, rid, vault_id, report, now)
+
+    def _open_escrow(
+        self, contract: Contract, rid: str, vault_id: str | None, report: MandateReport, now: datetime | None
+    ) -> TrusteeDecision:
+        """The escrow-opening PayPal call and what follows it. The intent is already recorded."""
         try:
             kwargs: dict[str, Any] = {"vault_id": vault_id} if vault_id else {}
             self._escrow = self.paypal.create_and_authorize(
@@ -215,9 +245,13 @@ class Trustee:
                 **kwargs,
             )
         except PayPalError as exc:
+            self.last_paypal_status = exc.status_code
+            if not is_transient_paypal(exc.status_code):
+                self.pending_money = None  # PayPal refused outright: nothing is held, nothing to resume
             self._log("paypal", {"error": str(exc)[:300], "op": "authorize", "request_id": rid})
             self._explanation("authorize", contract, f"escrow failed: {exc}")
             return TrusteeDecision("error", self.deal, report)
+        self.pending_money = None
         escrow = self._escrow
         if escrow.status != "authorized":
             # Approval flow: the order exists but no funds are held yet. Never
@@ -256,6 +290,55 @@ class Trustee:
         self._explanation("escrow", contract, f"escrow opened: {escrow.order_id}, {contract.price} held")
         return TrusteeDecision("escrowed", self.deal, report, escrow)
 
+    def resume_pending(self, contract: Contract, now: datetime | None = None) -> TrusteeDecision:
+        """Finish an escrow-opening call that was recorded but never answered: the host crashed between writing the
+        intent and writing the result, or PayPal timed out. The call is re-issued with the recorded request id, so
+        PayPal answers with the first result instead of holding the funds a second time. The mandate gate is not
+        re-run: the decision was made and recorded, and capture re-checks authority anyway."""
+        with self._lock:
+            pending = self.pending_money
+            noop = TrusteeDecision("no-op", self.deal, escrow=self._escrow)
+            if (
+                not pending
+                or pending.get("op") != "authorize-create"
+                or self.deal.state != DealState.CONTRACTED
+                or self._escrow is not None
+            ):
+                return noop
+            attempts = int(pending.get("attempts") or 0) + 1
+            if attempts > MAX_RESUME_ATTEMPTS:
+                if self.needs_attention:
+                    return noop
+                return self._alert(
+                    contract,
+                    "resume_exhausted",
+                    f"escrow opening {pending['request_id']} still unanswered after {MAX_RESUME_ATTEMPTS} attempts; "
+                    "check the order at PayPal",
+                )
+            pending["attempts"] = attempts
+            vault_id: str | None = None
+            funding = pending.get("funding")
+            if funding:
+                if self.autonomy is not None:
+                    vault_id = self.autonomy.funding.vault_id(funding["principal"], funding["funding_ref"])
+                if not vault_id:
+                    # Re-issuing without the vault would be a different request under the same id. Ask a human.
+                    return self._alert(
+                        contract,
+                        "resume_blocked",
+                        f"escrow opening {pending['request_id']} cannot resume: its funding source is gone",
+                    )
+            self._log(
+                "note",
+                {
+                    "op": "resume",
+                    "request_id": pending["request_id"],
+                    "explanation": f"resuming the escrow opening recorded at {pending.get('at')} "
+                    f"(attempt {attempts}), same PayPal request id",
+                },
+            )
+            return self._open_escrow(contract, pending["request_id"], vault_id, MandateReport(True), now)
+
     def on_delivery(self, delivery: Delivery, contract: Contract) -> TrusteeDecision:
         """Seller handed off the deliverable. Verify hash, move to DELIVERED."""
         with self._lock:
@@ -277,8 +360,33 @@ class Trustee:
                     "note": "hash recorded in ledger for arbitration audit",
                 },
             )
+            self._verify_delivery(contract, delivery)
             self._explanation("delivery", contract, "delivery recorded; awaiting buyer attestation")
             return TrusteeDecision("delivered", self.deal, escrow=escrow)
+
+    def _verify_delivery(self, contract: Contract, delivery: Delivery) -> None:
+        """Run Trustee's own check of the delivered bytes, when the host has them, and put the result on the ledger."""
+        if self.verifier is None:
+            return
+        try:
+            found = self.verifier(contract, delivery)
+        except Exception:  # noqa: BLE001 - a broken check leaves the buyer's evidence as the only evidence
+            log.exception("deal %s: delivery verification failed to run", self.deal.deal_id)
+            return
+        if found is None:
+            self._log("note", {"op": "verification", "explanation": "the seller gave Trustee no file to check"})
+            return
+        self._verification = found.as_dict()
+        self._log(
+            "verification",
+            {
+                "event": "trustee_check",
+                "ok": found.passed,
+                "hash_ok": found.hash_ok,
+                "sha256": (found.sha256_received or "")[:16],
+                "note": found.note(),
+            },
+        )
 
     def on_attest(self, attest: Attest, contract: Contract, now: datetime | None = None) -> TrusteeDecision:
         """Buyer's verdict. Accept -> capture. Reject -> dispute path (or void).
@@ -298,10 +406,14 @@ class Trustee:
         if attest.verdict == "accept":
             return self._settle(contract, "buyer attested accept; funds captured", now=now)
 
-        # reject, but the contract allows pro-rata settlement and the buyer's machine-checked counts
-        # qualify: capture the valid share. The amount is arithmetic on the counts, never a judge's call.
+        # reject, but the contract allows pro-rata settlement and the machine-checked counts qualify: capture the
+        # valid share. The amount is arithmetic on the counts, never a judge's call. When Trustee checked the file
+        # itself, its counts replace the buyer's.
         if self._ruling is None:
-            partial = compute_partial(contract, attest.evidence)
+            evidence = dict(attest.evidence)
+            if self._verification is not None:
+                evidence.update(Verification.from_dict(self._verification).evidence())
+            partial = compute_partial(contract, evidence)
             if partial is not None:
                 return self._settle(
                     contract,
@@ -315,7 +427,13 @@ class Trustee:
         self.deal.transition(DealState.DISPUTED, f"buyer rejected: {attest.reason[:120]}")
         if self._ruling is None:
             # Decided once: a retry after a failed void must not re-roll the ruling.
-            _, self._ruling = self._arbitrate(attest, contract)
+            ruled = self._ruling_from_verification() or self._contradicted_hash_claim(attest, contract)
+            if ruled is not None:
+                self._ruling = ruled
+                if ruled.decision == "uphold":
+                    self.needs_attention = ruled.reasoning[:300]
+            else:
+                _, self._ruling = self._arbitrate(attest, contract)
             ruling = self._ruling
             payload = {
                 "decision": ruling.decision,
@@ -364,6 +482,13 @@ class Trustee:
         now = now or datetime.now()
         with self._lock:
             noop = TrusteeDecision("no-op", self.deal, escrow=self._escrow)
+            if (
+                self.pending_money
+                and self.pending_money.get("op") == "authorize-create"
+                and self.deal.state == DealState.CONTRACTED
+                and self._escrow is None
+            ):
+                return self.resume_pending(contract, now)
             if self.awaiting_approval and now > contract.deadline:
                 return self.on_deadline_lapse(contract)  # nothing held: VOIDED without a PayPal call
             if self.deal.is_terminal or not self._funds_held():
@@ -410,6 +535,10 @@ class Trustee:
             escrow = self._raise_escrow()
             previous = escrow.authorization_id
             rid = self._request_id(f"reauthorize-{self.reauth_count + 1}")
+            blocked = self._record_intent(contract, "reauthorize", rid)
+            if blocked is not None:
+                self._reauth_retry_after = now + REAUTH_RETRY_BACKOFF
+                return blocked
             try:
                 escrow = self.paypal.reauthorize(escrow, request_id=rid)
             except PayPalError as exc:
@@ -418,6 +547,7 @@ class Trustee:
                 return TrusteeDecision(
                     "error", self.deal, escrow=self._escrow, explanation=f"reauthorize failed: {exc}"
                 )
+            self.pending_money = None
             self._escrow = escrow
             self.reauth_count += 1
             self.reauthorized_at = now
@@ -452,12 +582,16 @@ class Trustee:
                 return TrusteeDecision("rejected_mandate", self.deal, report, self._escrow, report.summarize())
             order_id = self._escrow.order_id
             rid = self._request_id("authorize")
+            blocked = self._record_intent(contract, "authorize", rid)
+            if blocked is not None:
+                return blocked
             try:
                 escrow = self.paypal.authorize_after_approval(order_id, request_id=rid)
             except PayPalError as exc:
                 self._paypal_failed("authorize", rid, exc)
                 self._explanation("approval", contract, f"authorize after approval failed: {exc}")
                 return TrusteeDecision("error", self.deal, report, self._escrow, f"authorize failed: {exc}")
+            self.pending_money = None
             escrow.approve_url = self._escrow.approve_url
             self._escrow = escrow
             self._log(
@@ -590,6 +724,37 @@ class Trustee:
         """Deterministic per deal+operation, so every retry is the same PayPal request."""
         return f"trustee-{self.deal.deal_id}-{op}"[:107]
 
+    def _record_intent(self, contract: Contract, op: str, rid: str, **detail: Any) -> TrusteeDecision | None:
+        """Write-ahead for one PayPal call. Returns None to go ahead, or an "unavailable" decision when the intent
+        could not be made durable; then no PayPal call is made and repeating the request is the retry."""
+        previous = self.pending_money
+        self.pending_money = {"op": op, "request_id": rid, "at": datetime.now().isoformat()}
+        self.pending_money.update({k: v for k, v in detail.items() if v is not None})
+        if self.before_money is None:
+            return None
+        try:
+            self.before_money(contract)
+        except Exception as exc:  # noqa: BLE001 - fail closed: no durable intent, no money call
+            self.pending_money = previous
+            log.error("deal %s: %s not attempted, the intent could not be recorded: %s", self.deal.deal_id, op, exc)
+            self._log(
+                "note",
+                {
+                    "op": "intent_not_recorded",
+                    "money_op": op,
+                    "request_id": rid,
+                    "explanation": f"{op} not attempted: the intent could not be recorded ({type(exc).__name__}); "
+                    "no PayPal call made, funds are where they were and retrying is safe",
+                },
+            )
+            return TrusteeDecision(
+                "unavailable",
+                self.deal,
+                escrow=self._escrow,
+                explanation=f"{op} not attempted: storage unavailable, nothing moved",
+            )
+        return None
+
     def _require_reachable(self, target: DealState) -> None:
         """Money must never move when the state machine cannot follow: check BEFORE any PayPal call."""
         if not self.deal.can(target):
@@ -637,6 +802,11 @@ class Trustee:
             if not report.ok:
                 return self._hold_for_mandate(contract, report)
         rid = self._request_id("capture")
+        blocked = self._record_intent(
+            contract, "capture", rid, amount=partial.captured if partial else str(contract.price)
+        )
+        if blocked is not None:
+            return blocked
         try:
             if partial is None:
                 escrow = self.paypal.capture(escrow, request_id=rid)
@@ -653,6 +823,7 @@ class Trustee:
             self._paypal_failed("capture", rid, exc)
             self._explanation("settle", contract, f"capture failed, funds still held: {exc}")
             return TrusteeDecision("error", self.deal, escrow=self._escrow, explanation=f"capture failed: {exc}")
+        self.pending_money = None
         self._escrow = escrow
         if partial is None:
             self._log("paypal", {"op": "capture", "order_id": escrow.order_id, "note": "settled to seller"})
@@ -698,12 +869,16 @@ class Trustee:
         self._require_reachable(DealState.VOIDED)
         escrow = self._raise_escrow()
         rid = self._request_id("void")
+        blocked = self._record_intent(contract, "void", rid)
+        if blocked is not None:
+            return blocked
         try:
             escrow = self.paypal.void(escrow, reason=void_reason, request_id=rid)
         except PayPalError as exc:
             self._paypal_failed("void", rid, exc)
             self._explanation("unwind", contract, f"void failed, funds still held: {exc}")
             return TrusteeDecision("error", self.deal, escrow=self._escrow, explanation=f"void failed: {exc}")
+        self.pending_money = None
         self._escrow = escrow
         self._log("paypal", {"op": "void", "order_id": escrow.order_id, "note": "funds released to buyer"})
         self.mandates.release(contract)
@@ -901,6 +1076,10 @@ class Trustee:
             if self.reauth_count:
                 snap["reauth_count"] = self.reauth_count
                 snap["reauthorized_at"] = _iso(self.reauthorized_at)
+            if self.pending_money is not None:
+                snap["pending_money"] = dict(self.pending_money)
+            if self._verification is not None:
+                snap["verification"] = dict(self._verification)
             return snap
 
     @classmethod
@@ -952,12 +1131,53 @@ class Trustee:
         trustee.settlement = snapshot.get("settlement")
         trustee.reauth_count = int(snapshot.get("reauth_count") or 0)
         trustee.reauthorized_at = _parse(snapshot.get("reauthorized_at"))
+        trustee.pending_money = snapshot.get("pending_money")
+        trustee._verification = snapshot.get("verification")
         return trustee
 
     def _raise_escrow(self) -> EscrowOrder:
         if self._escrow is None:
             raise IllegalTransition(self.deal.deal_id, self.deal.state, DealState.DELIVERED)
         return self._escrow
+
+    def _ruling_from_verification(self) -> Ruling | None:
+        """Trustee checked the delivered bytes itself, so its result decides, not the buyer's report.
+
+        Failed: release (refund), citing the contract clause that failed. Passed while the buyer rejects: the buyer's
+        complaint is not about anything the checks cover, so the funds stay held (uphold) for a person to decide."""
+        if self._verification is None:
+            return None
+        found = Verification.from_dict(self._verification)
+        if not found.passed:
+            return Ruling("release", found.failed_clause or "acceptance criteria", found.note(), objective=True)
+        reasoning = (
+            "Trustee checked the delivered file itself and every contract check passed; the buyer's rejection is "
+            "held for a person to review"
+        )
+        return Ruling("uphold", "acceptance criteria", reasoning, objective=False)
+
+    def _contradicted_hash_claim(self, attest: Attest, contract: Contract) -> Ruling | None:
+        """A buyer's "sha256 mismatch" that the signed record contradicts: the contract commits to a hash and the
+        seller's signed delivery reports that same hash. Taking the buyer's word would refund a buyer who holds a
+        correct file, so the funds stay held (uphold) and a human decides. Returns None when there is nothing to
+        contradict, and the claim then goes to the arbiter as before.
+
+        This settles who signed what, not what the bytes were: a seller who signed a false hash is caught by the
+        human review, which can ask both sides for the file. Trustee-side verification of the bytes closes that
+        too (docs/PAYPAL_SCALE.md, section 4.1)."""
+        if attest.evidence.get("sha256_check") != "mismatch":
+            return None
+        committed = (contract.good.sha256 or "").lower()
+        delivered = (self._last_delivery.content_hash if self._last_delivery else "").lower()
+        if not committed or delivered != committed:
+            return None
+        clause = next((c for c in contract.good.acceptance_criteria if "sha256" in c), "sha256 matches contract")
+        reasoning = (
+            f"buyer reported a sha256 mismatch, but the seller's signed delivery hash {delivered[:12]}... equals the "
+            "contract's sha256; the claim contradicts the signed record, so funds stay held for a human to review"
+        )
+        self._log("note", {"op": "evidence_check", "explanation": reasoning})
+        return Ruling("uphold", clause, reasoning, objective=False)
 
     def _arbitrate(self, attest: Attest, contract: Contract) -> tuple[str, Ruling]:
         """Delegate to the judge when one is set; otherwise apply the

@@ -143,7 +143,13 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       key: "verified",
       label: "Verified",
       status: attest ? (attestVerdict === "reject" ? "failed" : "done") : "todo",
-      detail: attest ? (attestVerdict === "reject" ? "check failed" : "check passed") : "",
+      detail: attest
+        ? attestVerdict === "reject"
+          ? "check failed"
+          : rows.some((r) => r.kind === "verification")
+            ? "checked by Trustee"
+            : "check passed"
+        : "",
     },
     {
       key: "final",
@@ -221,4 +227,87 @@ export function side(actor: string): "buyer" | "seller" | "system" {
   if (actor.startsWith("buyer") || actor.startsWith("northwind")) return "buyer";
   if (actor.startsWith("seller") || actor.startsWith("tidewater")) return "seller";
   return "system";
+}
+
+export interface CheckItem {
+  id: string;
+  ok: boolean;
+  label: string;
+  detail: string;
+}
+
+export interface CheckGroup {
+  title: string;
+  items: CheckItem[];
+}
+
+/** A person-readable name for an agent id: the company, not the key name. */
+function who(agent: string): string {
+  const s = side(agent);
+  return s === "buyer" ? "Northwind" : s === "seller" ? "Tidewater" : agent || "A party";
+}
+
+const SIGNED_BY: Record<string, string> = {
+  verify_contract: "contract",
+  verify_delivery: "delivery",
+  verify_attest: "delivery check",
+};
+
+/**
+ * Everything Trustee checked for this deal, grouped the way a person asks about it: was it really them (signatures),
+ * were they allowed (spending rules), and was the delivery what was promised. Read from the ledger rows only.
+ */
+export function deriveChecks(rows: Row[], ruleLabel: (rule: string) => string): CheckGroup[] {
+  const groups: CheckGroup[] = [];
+
+  const sigs = rows.filter((r) => r.kind === "identity" && r.check);
+  if (sigs.length) {
+    groups.push({
+      title: "Signatures",
+      items: sigs.map((r) => ({
+        id: r.id,
+        ok: r.check === "verified",
+        label: `${who(r.signer)}'s signature on the ${SIGNED_BY[r.event] ?? r.event.replace(/^verify_/, "")}`,
+        detail: r.check === "verified" ? "matches the registered key" : r.note || "does not match the registered key",
+      })),
+    });
+  }
+
+  const policy = derivePolicy(rows);
+  const mandates = rows.filter((r) => r.kind === "mandate" && r.note);
+  const spending: CheckItem[] = policy.rules.map((r) => ({
+    id: r.id,
+    ok: r.result === "pass",
+    label: ruleLabel(r.rule),
+    detail: r.note.replace(/^[^:]+: (pass|FAIL) /, ""),
+  }));
+  for (const r of mandates) {
+    const ok = r.note.startsWith("mandates OK");
+    spending.unshift({
+      id: r.id,
+      ok,
+      label: "Both sides within their spending limits",
+      detail: ok ? r.note.replace(/^mandates OK;?\s*/, "") : r.note,
+    });
+  }
+  if (spending.length) groups.push({ title: "Spending rules", items: spending });
+
+  const delivery: CheckItem[] = [];
+  const own = rows.find((r) => r.kind === "verification");
+  if (own) {
+    delivery.push({
+      id: own.id,
+      ok: own.result === "pass",
+      label: own.result === "pass" ? "Trustee's own check: the file matches" : "Trustee's own check: the file does not match",
+      detail: own.note.replace(/^Trustee checked the delivered file itself: /, ""),
+    });
+  }
+  const verdicts = rows.filter((r) => r.kind === "msg" && r.event === "attestation");
+  if (verdicts.length) {
+    const last = verdicts[verdicts.length - 1];
+    const ok = last.verdict.toLowerCase() !== "reject";
+    delivery.push({ id: last.id, ok, label: ok ? "The buyer accepted the file" : "The buyer rejected the file", detail: last.note });
+  }
+  if (delivery.length) groups.push({ title: "Delivery", items: delivery });
+  return groups;
 }

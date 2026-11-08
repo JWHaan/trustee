@@ -63,6 +63,11 @@ mandate check happens *before* authorize so no money can touch a forbidden deal.
 One good at a time (no multi-deal concurrency); no Payouts/fee-split; no
 Elastic/Zapier; arbiter = stretch; AG Grid in one ledger panel.
 
+> **Since overtaken.** The build went past these cuts: `platform/service.py` hosts many concurrent deals, the
+> arbiter is built, and Elastic and Zapier are optional integrations. Still cut: Payouts and fee splits. See the
+> [README](README.md) for the current scope and [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md) for what a PayPal
+> product would add.
+
 ## Rubric mapping
 
 - *Best Use of Agentic Commerce* — the entry is an A2A trust layer.

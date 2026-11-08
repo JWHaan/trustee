@@ -62,6 +62,7 @@ Payloads never contain secrets, signatures, keys, emails or raw PayPal bodies.
 | `mandate_recheck` | Mandate failed re-check | The agent's authority lapsed before approval or capture. Funds are not captured. Renew or revoke the mandate, then resolve the deal. |
 | `approval_expired` | Payer approval expired | The payer did not approve (or cancelled) at PayPal. Nothing was held. Re-open the deal if it is still wanted. |
 | `paypal_call_failed` | PayPal call failed — funds still held, retry pending | A capture or void failed. Funds are still held and the same call is safe to retry. Check PayPal status if it repeats. |
+| `storage_unavailable` | Storage down — money call not attempted | Trustee could not write the payment intent, so it did not call PayPal. Nothing moved. Fix the database or disk; the call is safe to retry. |
 
 Each deal sends at most one alert of each type. `TRUSTEE_ALERT_KINDS` (comma list of the names above) limits
 which types are sent.

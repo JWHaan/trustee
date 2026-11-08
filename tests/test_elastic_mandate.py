@@ -198,7 +198,14 @@ def test_setup_dry_run_prints_requests_and_sends_nothing(capsys: pytest.CaptureF
     assert mod.main(["--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "PUT https://es.example.com/_index_template/trustee-ledger" in out
-    for tool_id in ("trustee-deal-history", "trustee-spend", "trustee-void-reasons", "trustee-agent-reputation"):
+    for tool_id in (
+        "trustee-deal-history",
+        "trustee-spend",
+        "trustee-void-reasons",
+        "trustee-agent-reputation",
+        "trustee-money-incidents",
+        "trustee-contradicted-claims",
+    ):
         assert tool_id in out
     assert "POST https://kb.example.com/api/agent_builder/agents" in out
     assert "trustee-ledger-analyst" in out and "cannot move, refund, capture or void money" in out
@@ -301,3 +308,62 @@ def test_analyst_card_and_cli(capsys: pytest.CaptureFixture[str], monkeypatch: A
     monkeypatch.delenv("KIBANA_URL", raising=False)
     assert analyst_mod.main(["why", "x?"]) == 1
     assert "KIBANA_URL" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------- accountability tools
+
+
+def _shipped_docs(world: World) -> list[dict[str, Any]]:
+    """The documents the Elastic sink would index for everything on this world's ledger."""
+    from trustee.elastic.mapping import build_doc, deal_facts
+
+    facts: dict[str, dict[str, Any]] = {}
+    docs = []
+    for seq, ev in enumerate(world.service.ledger.tail(), start=1):
+        found = deal_facts(ev)
+        if found is not None and ev.deal_id:
+            facts[ev.deal_id] = found
+        docs.append(build_doc(ev, "platform", seq, facts.get(ev.deal_id or "")))
+    return docs
+
+
+def test_incident_rows_carry_the_fields_the_queries_filter_on():
+    """The ES|QL cannot run here, so check its inputs: rows from the real code paths have the kind, op, decision and
+    buyer values that money_incidents_query and contradicted_claims_query select on."""
+    from test_platform_api import GOOD_HASH
+
+    from trustee.elastic import queries
+
+    w = World().setup()
+    w.open(w.contract())
+    w.deliver("deal-1", content_hash=GOOD_HASH)
+    w.attest("deal-1", verdict="reject", evidence={"sha256_check": "mismatch"})
+    docs = _shipped_docs(w)
+    contradicted = [d for d in docs if d["kind"] == "note" and d.get("op") == "evidence_check"]
+    assert len(contradicted) == 1 and contradicted[0]["buyer"] == "buyer" and contradicted[0]["deal_id"] == "deal-1"
+    upheld = [d for d in docs if d["kind"] == "ruling" and d.get("decision") == "uphold"]
+    assert upheld and "contradicts the signed record" in upheld[0]["detail"]
+    incidents = queries.money_incidents_query("trustee-ledger")
+    for needle in ('"evidence_check"', 'decision == "uphold"', '"intent_not_recorded"', 'kind == "paypal_alert"'):
+        assert needle in incidents
+    assert 'op == "evidence_check"' in queries.contradicted_claims_query("trustee-ledger")
+
+
+def test_storage_refusal_rows_are_incidents(monkeypatch: pytest.MonkeyPatch):
+    w = World().setup()
+
+    def broken(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(w.store, "upsert_deal", broken)
+    assert w.open(w.contract()).status_code == 503
+    refused = [d for d in _shipped_docs(w) if d["kind"] == "note" and d.get("op") == "intent_not_recorded"]
+    assert refused and refused[0]["buyer"] == "buyer" and "no PayPal call made" in refused[0]["detail"]
+
+
+def test_incident_queries_reject_unsafe_index_names():
+    from trustee.elastic import queries
+
+    for build in (queries.money_incidents_query, queries.contradicted_claims_query):
+        with pytest.raises(ValueError):
+            build("ledger | DROP x")

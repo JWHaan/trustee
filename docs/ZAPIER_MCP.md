@@ -79,8 +79,8 @@ Set these as secrets on the platform that runs each agent:
 
 - **Render or another host for Trustee's own process:** these variables are not needed there. Trustee never calls
   Zapier MCP.
-- **Astropods, for the hosted Northwind and Tidewater containers:** set the variables for that agent in its
-  container environment. `python -m trustee.network.hosted` reads them automatically.
+- **Northwind or Tidewater running standalone** (`python -m trustee.network.northwind`, `... tidewater`): set the
+  variables for that agent in its environment.
 - **Local arena:** export them in the shell that starts the arena. Each agent reads its own variables when it is
   built. Without them the arena behaves as before.
 

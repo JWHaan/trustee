@@ -1,4 +1,5 @@
-# Runs the test suite, lint, format check and type check on every push and pull request.
+# Runs the test suite, lint, format check and type check on every push and pull request, and type-checks and
+# builds the arena UI.
 #
 # No secrets: the tests mock PayPal and the LLM, so they need no credentials. Dependencies come from
 # uv.lock (`--locked` fails the job if the lock file is out of date with pyproject.toml).
@@ -30,6 +31,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: "3.12"
 
       - name: Install dependencies
         run: uv sync --locked --extra dev
@@ -45,3 +47,31 @@ jobs:
 
       - name: Types
         run: uv run mypy
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: arena/ui
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: arena/ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit -p .
+
+      - name: Build
+        run: npm run build

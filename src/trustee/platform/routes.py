@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ..intent import IntentMandate
 from ..protocol import Attest, Contract, Delivery
@@ -475,6 +475,72 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
         if body.deal_id != deal_id:
             raise HTTPException(status_code=400, detail="deal_id in body does not match the path")
         return await call(service.on_delivery, deal_id, body)
+
+    @router.post(
+        "/v1/deals/{deal_id}/deliverable",
+        operation_id="upload_deliverable",
+        tags=["Deals"],
+        summary="Hand Trustee the delivered file so it can check it itself",
+        description=(
+            "The seller sends the file's raw bytes (`application/octet-stream`) while funds are held, then records the "
+            "delivery with that file's sha256 as `content_hash`. Trustee stores the file under its sha256, runs the "
+            "contract's checks on it, and rules on its own result rather than on the buyer's report. The buyer gets "
+            "the file from `GET` on the same path once the payment settles. No signature is needed here: only the "
+            "file under the hash the seller signs is ever checked."
+        ),
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+            }
+        },
+        responses=_errors(
+            {
+                404: "No deal with this id.",
+                409: "The deal is not holding funds.",
+                413: "The file is too large.",
+                422: "The file is empty.",
+            }
+        ),
+        status_code=201,
+    )
+    async def upload_deliverable(deal_id: str, request: Request) -> JSONResponse:
+        data = await request.body()
+        return await call(service.upload_deliverable, deal_id, data, status=201)
+
+    @router.get(
+        "/v1/deals/{deal_id}/deliverable",
+        operation_id="download_deliverable",
+        tags=["Deals"],
+        summary="The buyer downloads the delivered file after the payment settles",
+        description=(
+            "Signed by the buyer's agent key: `X-Trustee-Signature` is the signature over the UTF-8 bytes of "
+            "`trustee-download:{deal_id}`. Available only once the deal is SETTLED, so payment and file change hands "
+            "together."
+        ),
+        response_class=Response,
+        responses={
+            200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+            **_errors(
+                {
+                    401: "Not signed by the buyer.",
+                    404: "No deal, or Trustee holds no file for it.",
+                    409: "The payment has not settled.",
+                }
+            ),
+        },
+    )
+    async def download_deliverable(deal_id: str, x_trustee_signature: str | None = Header(default=None)) -> Response:
+        try:
+            data, name = await asyncio.to_thread(service.download_deliverable, deal_id, x_trustee_signature)
+        except ServiceError as exc:
+            return error_response(exc)
+        safe = "".join(c for c in name.rsplit("/", 1)[-1] if c.isalnum() or c in "._-") or "deliverable"
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{safe}"'},
+        )
 
     @router.post(
         "/v1/deals/{deal_id}/attest",

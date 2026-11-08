@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import {
   fetchHealth,
   fetchScenarios,
@@ -11,14 +11,10 @@ import {
   type ScenarioInfo,
   type Snapshot,
 } from "./api";
-import { ApprovalBanner } from "./Approval";
+import { Details } from "./Details";
 import { Header } from "./Header";
-import { LedgerGrid } from "./LedgerGrid";
-import { MoneyPanel } from "./MoneyPanel";
-import { ScenarioPicker, scenarioStory } from "./ScenarioPicker";
-import { PolicyChecklist } from "./Policy";
-import { Timeline } from "./Timeline";
-import { Transcript } from "./Transcript";
+import { ScenarioPicker } from "./ScenarioPicker";
+import { Verdict } from "./Verdict";
 import { pendingApproval } from "./describe";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,150 +118,35 @@ export default function App() {
     return () => clearTimeout(t);
   }, [scenarios, run]);
 
-  const outcome = snap?.outcome ?? null;
-  const unapproved = outcome === "approval_timeout" || outcome === "approval_cancelled" || outcome === "approval_failed";
-  const verdict =
-    outcome === "rejected_identity"
-      ? "REJECTED"
-      : snap && (snap.state === "SETTLED" || snap.state === "VOIDED")
-        ? snap.state
-        : null;
-  const rejection = rows.find((r) => r.kind === "identity" && r.check === "rejected");
   const approving = pendingApproval(rows, running);
 
-  const verdictCard = verdict ? (
-    <div className={`verdict ${verdict === "SETTLED" ? "good" : "bad"}`}>
-      <div className="big">
-        {verdict === "SETTLED"
-          ? "Settled: funds captured to seller"
-          : verdict === "REJECTED"
-            ? "Rejected: forged signature, no money moved"
-            : unapproved
-              ? "Voided: the buyer never approved, nothing was charged"
-              : "Voided: buyer refunded"}
-      </div>
-      <div className="why">
-        {verdict === "SETTLED"
-          ? snap?.attest?.reason ?? "delivery attested against the contract clauses"
-          : verdict === "REJECTED"
-            ? rejection?.note ?? "the signature did not match the registered key"
-            : snap?.ruling?.reasoning ?? snap?.attest?.reason ?? "escrow released"}
-      </div>
-      {verdict === "REJECTED" ? (
-        <div className="clause">PayPal was never called · signer: {rejection?.signer ?? "unknown"}</div>
-      ) : snap?.ruling ? (
-        <div className="clause">
-          clause: {snap.ruling.clause} · ruling: {snap.ruling.decision}
-          {snap.ruling.objective ? " (objective)" : " (judged)"}
-        </div>
-      ) : null}
-      {snap?.receipt ? (
-        <div className="clause receipt-line">
-          {snap.receipt_verified ? (
-            <span className="badge good">
-              <Check size={11} strokeWidth={3} aria-hidden="true" /> Receipt verified
-            </span>
-          ) : (
-            <span className="badge bad">Receipt not verified</span>
-          )}{" "}
-          {snap.human_present === false ? "paid under the intent mandate, no human click" : "approved by a human"} ·{" "}
-          <a href={`/api/runs/${snap.run_id}/receipt`} target="_blank" rel="noopener noreferrer">
-            signed receipt (JSON)
-          </a>
-        </div>
-      ) : null}
-    </div>
-  ) : null;
-
-  const status = running
-    ? { text: "Running", tone: "run" }
-    : verdict === "SETTLED"
-      ? { text: "Settled", tone: "good" }
-      : verdict === "REJECTED"
-        ? { text: "Rejected", tone: "bad" }
-        : verdict === "VOIDED"
-          ? { text: unapproved ? "Voided" : "Refunded", tone: "refund" }
-          : snap
-            ? { text: (snap.outcome ?? snap.state).replace(/_/g, " "), tone: "idle" }
-            : { text: "Waiting for a run", tone: "idle" };
-  const model =
-    snap?.fallback_from === "live"
-      ? { text: "Live model failed, replayed the script", tone: "warn" }
-      : snap?.effective_mode === "live"
-        ? { text: "Live model", tone: "" }
-        : snap?.effective_mode === "scripted"
-          ? { text: "Scripted replay", tone: "" }
-          : null;
-
-  const footer = (
-    <>
-      {verdictCard}
-      {approving ? <ApprovalBanner row={approving} /> : null}
-    </>
-  );
-
   return (
-    <div className="shell">
-      <Header health={health} mode={mode} onMode={setMode} running={running} />
-      <ScenarioPicker
-        scenarios={scenarios}
-        current={current}
-        running={running}
-        warming={warming}
-        onRun={(name) => void run(name)}
-      />
+    <div className="shell-v2">
+      <Header health={health} />
+      <main className="page">
+        <ScenarioPicker
+          scenarios={scenarios}
+          current={current}
+          running={running}
+          warming={warming}
+          mode={mode}
+          onMode={setMode}
+          onRun={(name) => void run(name)}
+        />
 
-      <section className="deal" aria-label="The deal">
-        <div className="deal-money">
-          <MoneyPanel rows={rows} snap={snap} running={running} story={scenarioStory(scenarios, current)} />
-        </div>
-        <div className="deal-steps">
-          <div className="steps-head">
-            <span className={`run-status ${status.tone}`} role="status">
-              <span className="run-dot" aria-hidden="true" />
-              {status.text}
+        {error ? (
+          <div className="toast" role="alert">
+            <span>
+              <b>The run could not start.</b> {error}
             </span>
-            {model ? <span className={`run-model ${model.tone}`}>{model.text}</span> : null}
-            {snap?.deal_id ? (
-              <span className="run-meta">
-                Deal <code>{snap.deal_id.slice(-8)}</code>, {snap.turns} negotiation moves
-              </span>
-            ) : null}
+            <button type="button" className="icon" onClick={() => setError(null)} aria-label="Dismiss error">
+              <X size={14} aria-hidden="true" />
+            </button>
           </div>
-          <Timeline rows={rows} snap={snap} running={running} />
-        </div>
-      </section>
+        ) : null}
 
-      {error ? (
-        <div className="toast" role="alert">
-          <span>
-            <b>The run failed.</b> {error} Pick a scenario to try again.
-          </span>
-          <button type="button" className="icon" onClick={() => setError(null)} aria-label="Dismiss error">
-            <X size={14} aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
-
-      <main>
-        <div className="col-left">
-          <PolicyChecklist rows={rows} />
-          <section className="panel feed-panel" aria-label="Negotiation and settlement">
-            <div className="panel-head">
-              <h2>Negotiation and settlement</h2>
-              <span className="count">{rows.filter((r) => r.kind !== "note").length} events</span>
-            </div>
-            <Transcript rows={rows} running={running} snap={snap} footer={footer} />
-          </section>
-        </div>
-
-        <section className="panel ledger-panel" aria-label="Ledger tape">
-          <div className="panel-head">
-            <h2>Ledger tape</h2>
-            <span className="count">Append-only, read from the server</span>
-          </div>
-          <LedgerGrid rows={rows} />
-        </section>
+        <Verdict rows={rows} snap={snap} running={running} scenario={current} approving={approving} />
+        <Details rows={rows} snap={snap} running={running} />
       </main>
     </div>
   );

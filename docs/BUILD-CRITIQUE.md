@@ -1,3 +1,6 @@
+> **Historical review.** Written against an early build (24 tests). The adapter defects in §1 have since been
+> fixed and are covered by the current suite; the open item that remains is a real-sandbox run (README, Status).
+
 # Critique of `docs/BUILD.md`
 
 Reviewed against the code it builds on (`src/trustee/*`, 24 tests green, mypy +

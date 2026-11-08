@@ -49,6 +49,18 @@ export interface Snapshot {
   /** The receipt checked offline (signature + ledger hash chain) at the end of the run. */
   receipt_verified?: boolean | null;
   human_present?: boolean | null;
+  summary?: Summary;
+}
+
+/** What happened, in plain words: written by the server (trustee.summary), the same text agents get from the API. */
+export interface Summary {
+  status: "paid" | "partly_paid" | "refunded" | "cancelled" | "refused" | "on_hold" | "awaiting_approval" | "in_progress";
+  tone: "good" | "bad" | "warn" | "neutral";
+  headline: string;
+  reasons: string[];
+  next_step: string | null;
+  money: { paid_to_seller: string; returned_to_buyer: string; held: string };
+  currency: string;
 }
 
 export interface Receipt {
