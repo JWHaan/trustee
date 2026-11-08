@@ -48,7 +48,8 @@ no-ops — funds can never double-settle or strand.
 | ![honest run](docs/arena-honest.png) | ![cheat run](docs/arena-cheat.png) |
 
 Why this matters for PayPal, and how it would scale from this demo to a PayPal product:
-[docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md).
+[docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
+verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
 
 ## Run it
 
