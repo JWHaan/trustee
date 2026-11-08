@@ -178,8 +178,8 @@ with the receipt when the money moves.
 from trustee.a2a import A2AClient
 from trustee.a2a.client import artifact_data
 
-c = A2AClient("http://127.0.0.1:8000")          # or A2AClient(card_url=...), http=TestClient(app), authorization="Bearer ..."
-task = c.call_skill("open-escrow", contract.model_dump(mode="json"))     # contract signed by both parties
+c = A2AClient("http://127.0.0.1:8000")  # or A2AClient(card_url=...), http=TestClient(app), authorization="Bearer ..."
+task = c.call_skill("open-escrow", contract.model_dump(mode="json"))  # contract signed by both parties
 c.set_push_config(task.id, "https://me.example/hook", token="secret")
 task = c.call_skill("record-delivery", delivery.model_dump(mode="json"), task_id=task.id)
 task = c.call_skill("attest-delivery", attest.model_dump(mode="json"), task_id=task.id)

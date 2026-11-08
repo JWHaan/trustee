@@ -64,7 +64,7 @@ export function describe(row: Row): Line {
 
   if (row.kind === "run") {
     if (row.event === "run_started") return { headline: "run started", detail: note };
-    if (row.event === "run_finished") return { headline: `run finished — ${row.price ? money(row.price) : ""}`, detail: note };
+    if (row.event === "run_finished") return { headline: `run finished: ${row.price ? money(row.price) : ""}`, detail: note };
     if (row.event === "cap_reached") return { headline: "move cap reached", detail: note, price };
     return { headline: row.event.replace(/_/g, " "), detail: note };
   }
@@ -95,8 +95,8 @@ export function describe(row: Row): Line {
   if (row.kind === "identity") {
     const who = actorName(row.signer || row.actor);
     return row.check === "rejected"
-      ? { headline: `SIGNATURE REJECTED — ${who}`, detail: note }
-      : { headline: `signature verified — ${who}`, detail: note };
+      ? { headline: `signature rejected: ${who}`, detail: note }
+      : { headline: `signature verified: ${who}`, detail: note };
   }
 
   if (row.kind === "a2a") {
@@ -121,7 +121,7 @@ export function describe(row: Row): Line {
     const op = row.paypal_op || row.event;
     const label =
       op === "authorize" ? "funds held" : op === "capture" ? "captured to seller" : op === "void" ? "hold released" : op;
-    return { headline: `paypal ${op} — ${label}`, detail: note || (row.order_id ? `order ${row.order_id}` : "") };
+    return { headline: `paypal ${op}: ${label}`, detail: note || (row.order_id ? `order ${row.order_id}` : "") };
   }
 
   if (row.kind === "delivery") {
@@ -135,11 +135,11 @@ export function describe(row: Row): Line {
   if (row.kind === "attest") {
     // The trustee's copy of the buyer's verdict. The buyer's own words are the
     // msg/attestation row above it, so this one states receipt, not opinion.
-    return { headline: `attestation on record — ${row.verdict}`, detail: note };
+    return { headline: `attestation on record: ${row.verdict}`, detail: note };
   }
 
   if (row.kind === "policy") {
-    if (row.rule) return { headline: `${row.rule} — ${row.result}`, detail: note };
+    if (row.rule) return { headline: `${row.rule}: ${row.result}`, detail: note };
     switch (row.event) {
       case "intent_consent":
         return { headline: "one-time consent", detail: note };
@@ -151,9 +151,9 @@ export function describe(row: Row): Line {
         return {
           headline:
             row.result === "autonomous"
-              ? "paying under the intent mandate — no human click"
+              ? "paying under the intent mandate, no human click"
               : row.result === "step_up"
-                ? "outside the instruction — a human must approve"
+                ? "outside the instruction: a human must approve"
                 : "refused by the intent mandate",
           detail: note,
         };
@@ -171,7 +171,7 @@ export function describe(row: Row): Line {
     const arbiter = row.actor.startsWith("arbiter");
     return arbiter
       ? { headline: `rules ${row.event.toUpperCase()}`, detail: note }
-      : { headline: `applies the ruling — ${row.event.toUpperCase()}`, detail: note };
+      : { headline: `applies the ruling: ${row.event}`, detail: note };
   }
 
   return { headline: row.event || row.kind, detail: note };

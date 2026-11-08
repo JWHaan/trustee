@@ -1,12 +1,14 @@
-# Every push and pull request: lint, format, types and the full test suite for the Python service, and a type-check
-# and production build for the arena UI. The suite runs in dry-run mode: no PayPal, LLM or other credentials needed.
+# Runs the test suite, lint, format check and type check on every push and pull request, and type-checks and
+# builds the arena UI.
+#
+# No secrets: the tests mock PayPal and the LLM, so they need no credentials. Dependencies come from
+# uv.lock (`--locked` fails the job if the lock file is out of date with pyproject.toml).
 
 name: ci
 
 on:
   push:
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,24 +18,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - name: Check out the repository
+        uses: actions/checkout@v5
         with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
           python-version: "3.12"
-      - name: Install
-        run: uv sync --extra dev
-      - name: Lint
-        run: uv run ruff check src tests scripts examples
-      - name: Format
-        run: uv run ruff format --check src tests scripts examples
-      - name: Types
-        run: uv run mypy
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
       - name: Tests
         run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy
 
   ui:
     runs-on: ubuntu-latest
@@ -42,15 +55,23 @@ jobs:
       run:
         working-directory: arena/ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out the repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: arena/ui/package-lock.json
-      - name: Install
+
+      - name: Install dependencies
         run: npm ci
+
       - name: Types
         run: npx tsc --noEmit -p .
+
       - name: Build
         run: npm run build

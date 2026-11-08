@@ -19,7 +19,7 @@ function Bubble({ row, children }: { row: Row; children: ReactNode }) {
       <div className={`bubble ${s}`}>
         <div className={`bubble-who actor-${name}`}>
           {WHO[name] ?? name}
-          <span> · {s} agent</span>
+          <span>{s} agent</span>
         </div>
         {children}
       </div>
@@ -50,7 +50,7 @@ function Message({ row, snap }: { row: Row; snap: Snapshot | null }) {
       <Bubble row={row}>
         <div className="bubble-head">
           <span className="verb">Checks the delivery</span>
-          <span className={`verdict-chip ${reject ? "bad" : "good"}`}>{reject ? "REJECT" : "ACCEPT"}</span>
+          <span className={`verdict-chip ${reject ? "bad" : "good"}`}>{reject ? "Reject" : "Accept"}</span>
         </div>
         {row.note ? <p>{row.note}</p> : null}
       </Bubble>
@@ -73,7 +73,7 @@ function Message({ row, snap }: { row: Row; snap: Snapshot | null }) {
     return (
       <div className="ruling">
         <div className="ruling-head">
-          <Gavel size={15} aria-hidden="true" /> Arbiter ruling: <b>{row.event.toUpperCase()}</b>
+          <Gavel size={15} aria-hidden="true" /> Arbiter ruling: <b>{row.event.charAt(0).toUpperCase() + row.event.slice(1)}</b>
           {snap?.ruling ? <span className="tag info">{snap.ruling.objective ? "objective" : "judged"}</span> : null}
         </div>
         <p>{row.note}</p>

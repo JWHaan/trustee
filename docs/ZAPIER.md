@@ -79,6 +79,7 @@ Zapier's Catch Hook does not check headers on its own. To verify, use the **Catc
 
 ```python
 import hmac, hashlib
+
 expected = "sha256=" + hmac.new(SECRET.encode(), input_data["raw_body"].encode(), hashlib.sha256).hexdigest()
 if not hmac.compare_digest(expected, input_data["signature"]):
     raise Exception("bad signature")
