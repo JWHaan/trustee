@@ -146,6 +146,9 @@ sweeper in-process (`platform/service.py`). For multiple instances:
   scheduled job.
 - Push notifications (`a2a/push.py`) and Elastic shipping are already off the money path; keep them there.
 
+The full design, with measurements, failure modes and a capacity estimate, is in
+[SCALE_ARCHITECTURE.md](./SCALE_ARCHITECTURE.md).
+
 ### 4.6 Signing keys
 
 The receipt key comes from `TRUSTEE_SIGNING_KEY` or is generated into the store, and receipts carry no key id. At
