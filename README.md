@@ -53,6 +53,33 @@ Why this matters for PayPal, and how it would scale from this demo to a PayPal p
 [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
 verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
 
+## What Trustee stops
+
+Every row is an executable check in `tests/test_attacks.py`, run by CI. The table is generated from those same checks.
+
+<!-- attack-table:start -->
+| Attack | Trustee's defence | Result |
+|---|---|---|
+| Honest deal (control) | Pays the seller once | ✅ paid once |
+| Someone signs the contract as the seller with an unregistered key | Refused before PayPal | ✅ refused (401), PayPal never called |
+| The seller signs an "accept" as if it were the buyer | Refused; nothing captured | ✅ refused (401), nothing captured |
+| The buyer's agent agrees a price above its spending limit | Refused before PayPal | ✅ refused (403), PayPal never called |
+| The agent pays more than the human's signed instruction allows | Steps up to a person | ✅ stepped up to a person |
+| The human revokes the agent's limit after funds are held | Held for a person, no capture | ✅ held for a person, nothing captured |
+| Someone replays an older, looser signed limit | Refused | ✅ refused (409) |
+| The seller ships a junk file | Refunded on Trustee's own check | ✅ refunded on Trustee's own check |
+| The seller signs the contract's hash but hands over a different file | Refunded; the lie is caught | ✅ refunded, lie caught |
+| The buyer gets a correct file and claims it failed | Held for a person; no free refund | ✅ held for a person, no free refund |
+| The buyer under-reports valid rows to pay less | Pays by Trustee's own count | ✅ paid 90% (Trustee's count), not 52% |
+| The seller sells a price feed with stale prices | Refunded on the market check | ✅ refunded on the market check |
+| The buyer's accept arrives twice | Captured once | ✅ captured once |
+| The same deal is opened twice | Held once | ✅ held once |
+| The server dies right after PayPal holds the money | Finished on restart; one hold | ✅ finished on restart, one hold |
+| The database fails just before a payment | No PayPal call | ✅ refused (503), PayPal never called |
+
+16 of 16 defences held (2026-11-08, dry-run, `python scripts/attack_report.py`).
+<!-- attack-table:end -->
+
 ## What a deal reports
 
 Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status (data part) and in each arena run.
