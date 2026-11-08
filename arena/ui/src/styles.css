@@ -79,12 +79,21 @@ ol {
 
 .shell {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  /* A column, not a fixed row template: the intent-mandate checklist and the toast come and go, and a fixed
+     row count put the checklist in main's 1fr track, where it drew over the money panel. */
+  display: flex;
+  flex-direction: column;
   background:
     radial-gradient(1100px 360px at 50% -12%, rgba(245, 181, 68, 0.07), transparent 70%),
     var(--bg);
   position: relative;
+}
+
+.shell > * {
+  flex: none;
+}
+.shell > main {
+  flex: 1 1 0;
 }
 
 /* ----------------------------------------------------------------- header */
