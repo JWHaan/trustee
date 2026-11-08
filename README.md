@@ -1,5 +1,7 @@
 # Trustee
 
+[![ci](https://github.com/JWHaan/trustee/actions/workflows/ci.yml/badge.svg)](https://github.com/JWHaan/trustee/actions/workflows/ci.yml)
+
 An escrow + arbitration agent for agent-to-agent commerce — PayPal AI Hackathon entry.
 
 In an agent-to-agent world, two agents can negotiate anything and enforce nothing.

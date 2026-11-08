@@ -469,7 +469,7 @@ def test_buyer_rejects_stale_feed_and_reports_counts_only_with_a_partial_term(tm
 
 
 def test_buyer_mixed_feed_with_partial_term_yields_a_prorata_payout(tmp_path: Path):
-    
+
     buyer, store = make_buyer(tmp_path)
     contract = contract_with_hash(MIXED.name, PartialTerms(basis="units", min_fraction=Decimal("0.5")))
     attest = buyer.verify_delivery(contract, deliver(store, contract))
