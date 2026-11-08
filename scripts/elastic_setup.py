@@ -34,7 +34,9 @@ INSTRUCTIONS = (
     "records every deal event. Answer only from the results of your tools, never from memory or guesses. Cite the "
     "deal id for every claim about a deal. If a tool returns no rows, say the ledger has nothing for that "
     "question. You can only read the ledger: you cannot move, refund, capture or void money, and you must say so "
-    "if asked. Explain refunds and voids from the 'detail' column of the state and ruling rows. Keep answers short."
+    "if asked. Explain refunds and voids from the 'detail' column of the state and ruling rows. When asked what "
+    "needs attention, use the incidents tool; when asked about buyers abusing refunds, use the contradicted-claims "
+    "tool. Keep answers short."
 )
 
 
@@ -63,6 +65,12 @@ def tools(index: str, legacy: bool = False) -> list[dict[str, Any]]:
         "description": f"Only events at or after this ISO-8601 time. Defaults to {SINCE_DEFAULT}.",
         "optional": True,
         "defaultValue": SINCE_DEFAULT,
+    }
+    limit = {
+        "type": t["integer"],
+        "description": "Maximum rows. Defaults to 25.",
+        "optional": True,
+        "defaultValue": 25,
     }
 
     def tool(tool_id: str, description: str, query: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -99,15 +107,23 @@ def tools(index: str, legacy: bool = False) -> list[dict[str, Any]]:
             "Recent deals that were voided or refunded, newest first, with the buyer, seller, amount and the "
             "reason recorded when the escrow was released.",
             queries.void_reasons_query(index),
-            {
-                "since": since,
-                "limit": {
-                    "type": t["integer"],
-                    "description": "Maximum rows. Defaults to 25.",
-                    "optional": True,
-                    "defaultValue": 25,
-                },
-            },
+            {"since": since, "limit": limit},
+        ),
+        tool(
+            "trustee-money-incidents",
+            "Deals that need a person, newest first: PayPal events the deal could not follow, money calls refused "
+            "because storage was down, buyer claims the signed record contradicted, escrow resumes after a crash, "
+            "and disputes holding funds. 'detail' says why.",
+            queries.money_incidents_query(index),
+            {"since": since, "limit": limit},
+        ),
+        tool(
+            "trustee-contradicted-claims",
+            "Buyers whose 'hash mismatch' rejections were contradicted by the seller's signed delivery and the "
+            "contract, with how many of their deals that affected. A high count suggests a buyer trying to keep "
+            "files without paying.",
+            queries.contradicted_claims_query(index),
+            {"since": since, "limit": limit},
         ),
         tool(
             "trustee-agent-reputation",
