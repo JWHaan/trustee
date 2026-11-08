@@ -19,23 +19,43 @@ interface Party {
   line: string;
 }
 
-const TONE_ICON: Record<Summary["tone"], ReactNode> = {
-  good: <Check size={20} strokeWidth={2.5} aria-hidden="true" />,
-  bad: <Undo2 size={20} strokeWidth={2.25} aria-hidden="true" />,
-  warn: <Hourglass size={20} strokeWidth={2.25} aria-hidden="true" />,
-  neutral: <CircleDashed size={20} strokeWidth={2.25} aria-hidden="true" />,
+/** The icon says what happened to the money; the tone colour says whether that is good news. */
+const STATUS_ICON: Record<Summary["status"], ReactNode> = {
+  paid: <Check size={20} strokeWidth={2.5} aria-hidden="true" />,
+  partly_paid: <Check size={20} strokeWidth={2.5} aria-hidden="true" />,
+  refunded: <Undo2 size={20} strokeWidth={2.25} aria-hidden="true" />,
+  cancelled: <Undo2 size={20} strokeWidth={2.25} aria-hidden="true" />,
+  refused: <ShieldX size={20} strokeWidth={2.25} aria-hidden="true" />,
+  on_hold: <Hourglass size={20} strokeWidth={2.25} aria-hidden="true" />,
+  awaiting_approval: <Hourglass size={20} strokeWidth={2.25} aria-hidden="true" />,
+  in_progress: <CircleDashed size={20} strokeWidth={2.25} aria-hidden="true" />,
 };
+
+/** Where the money ended up, for the dot's colour: green paid, blue back with the buyer, gold held, grey untouched. */
+type MoneyKind = "paid" | "returned" | "held" | "none";
 
 const amt = (v: string, currency: string) => `${money(v) || v} ${currency === "USD" ? "" : currency}`.trim();
 
-function finishedParties(s: Summary, buyer: string, seller: string): { parties: Party[]; spot: Spot; split: boolean } {
+function finishedParties(
+  s: Summary,
+  buyer: string,
+  seller: string,
+): { parties: Party[]; spot: Spot; split: boolean; kind: MoneyKind } {
   const m = s.money;
   const paid = Number(m.paid_to_seller) > 0;
   const back = Number(m.returned_to_buyer) > 0;
   const held = Number(m.held) > 0;
   const c = s.currency;
   const buyerLine = back ? (paid ? `got ${amt(m.returned_to_buyer, c)} back` : `keeps ${amt(m.returned_to_buyer, c)}`) : paid ? `paid ${amt(m.paid_to_seller, c)}` : "charged nothing";
-  const holdLine = held ? `holding ${amt(m.held, c)}` : paid || back ? "released" : "never held";
+  const holdLine = held
+    ? `holding ${amt(m.held, c)}`
+    : paid && back
+      ? "split between both"
+      : paid
+        ? "paid out to the seller"
+        : back
+          ? "released to the buyer"
+          : "never held";
   const sellerLine = paid ? `received ${amt(m.paid_to_seller, c)}` : "not paid";
   const spot: Spot = held ? "hold" : paid ? "seller" : "buyer";
   return {
@@ -46,6 +66,7 @@ function finishedParties(s: Summary, buyer: string, seller: string): { parties: 
     ],
     spot,
     split: paid && back,
+    kind: held ? "held" : paid ? "paid" : back ? "returned" : "none",
   };
 }
 
@@ -54,6 +75,7 @@ function liveParties(rows: Row[], snap: Snapshot | null, running: boolean, buyer
   const a = m.amount ? money(m.amount) : "";
   const held = m.phase === "held";
   const spot: Spot = held ? "hold" : m.phase === "settled" ? "seller" : "buyer";
+  const kind: MoneyKind = held ? "held" : m.phase === "settled" ? "paid" : m.phase === "refunded" ? "returned" : "none";
   return {
     parties: [
       { key: "buyer" as Spot, name: buyer, line: m.phase === "idle" ? "agreeing a price" : a ? `agreed ${a}` : "agreed" },
@@ -66,6 +88,7 @@ function liveParties(rows: Row[], snap: Snapshot | null, running: boolean, buyer
     ],
     spot,
     split: false,
+    kind,
   };
 }
 
@@ -112,10 +135,21 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
   const ref = snap?.escrow?.order_id;
 
   return (
-    <section className={`verdict-v2 tone-${tone}`} aria-label="what happened" aria-live="polite">
+    <section className={`verdict-v2 tone-${tone}`} aria-label="What happened">
       <div className="v-head">
-        <span className="v-icon">{summary ? TONE_ICON[tone] : running ? <CircleDashed size={20} className="spin" aria-hidden="true" /> : <ShieldX size={20} aria-hidden="true" />}</span>
-        <h2 className="v-headline">{headline}</h2>
+        <span className="v-icon">
+          {summary ? (
+            STATUS_ICON[summary.status]
+          ) : running ? (
+            <CircleDashed size={20} className="spin" aria-hidden="true" />
+          ) : (
+            <CircleDashed size={20} aria-hidden="true" />
+          )}
+        </span>
+        {/* Only the headline is announced: the step bar changes many times during a run. */}
+        <h2 className="v-headline" aria-live="polite" aria-atomic="true">
+          {headline}
+        </h2>
       </div>
 
       {reasons.length ? (
@@ -126,7 +160,7 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
         </ul>
       ) : null}
 
-      <ol className={`ml spot-${flow.spot} ${flow.split ? "split" : ""}`} aria-label="where the money is">
+      <ol className={`ml spot-${flow.spot} money-${flow.kind} ${flow.split ? "split" : ""}`} aria-label="Where the money is">
         {flow.parties.map((p) => (
           <li key={p.key} className={`ml-stop ${p.key} ${flow.spot === p.key ? "here" : ""}`}>
             <span className="ml-dot" aria-hidden="true" />
@@ -141,9 +175,18 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
 
       <Timeline rows={rows} snap={snap} running={running} />
 
-      {ref ? (
+      {ref || (snap && !running) ? (
         <p className="v-ref">
-          PayPal order <span>{ref}</span>
+          {ref ? (
+            <>
+              PayPal order <span>{ref}</span>
+            </>
+          ) : null}
+          {snap && !running && snap.deal_id ? (
+            <a href={`/api/runs/${snap.run_id}/evidence`} target="_blank" rel="noopener noreferrer">
+              Evidence pack (signed JSON)
+            </a>
+          ) : null}
         </p>
       ) : null}
     </section>

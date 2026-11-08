@@ -477,6 +477,40 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
         return await call(service.on_delivery, deal_id, body)
 
     @router.post(
+        "/v1/criteria/draft",
+        operation_id="draft_criteria",
+        tags=["Deals"],
+        summary="Draft checkable acceptance criteria from a buyer's request",
+        description=(
+            "AI proposes, code decides: from a plain-language request, returns contract criteria in a form Trustee can "
+            "check on the delivered file (schema, row count and required fields, file hash, market check). A column "
+            "or a row count is kept only if it appears in the request; anything else is returned as a criterion a "
+            'person decides. Nothing is stored. Body: `{"request": str, "sha256": str | null}`.'
+        ),
+        responses=_errors({422: "The request is empty or names nothing checkable."}),
+    )
+    async def draft_criteria(body: dict[str, Any]) -> JSONResponse:
+        request = str(body.get("request") or "")
+        sha256 = body.get("sha256")
+        return await call(service.draft_criteria, request, str(sha256) if sha256 else None)
+
+    @router.get(
+        "/v1/deals/{deal_id}/evidence",
+        operation_id="get_evidence_pack",
+        tags=["Deals"],
+        summary="Signed dispute evidence pack for a deal",
+        description=(
+            "Everything needed to decide a dispute without taking either side's word: the contract with both "
+            "signatures, the seller's signed delivery, Trustee's own check of the delivered file, the buyer's "
+            "attestation, the ruling, the plain-language summary, the signed receipt, the PayPal ids, and every "
+            "ledger event with a re-check of its hash chain. Signed by Trustee's key over its canonical JSON."
+        ),
+        responses=_errors({404: "No deal with this id."}),
+    )
+    async def evidence_pack(deal_id: str) -> JSONResponse:
+        return await call(service.evidence, deal_id)
+
+    @router.post(
         "/v1/deals/{deal_id}/deliverable",
         operation_id="upload_deliverable",
         tags=["Deals"],

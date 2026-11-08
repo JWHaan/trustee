@@ -66,11 +66,17 @@ def test_order_body_has_no_payer_field_and_asks_for_approval():
     rec = Recorder()
     client = live_client(rec)
     order = client.create_and_authorize(
-        amount=Decimal("156.00"), currency="USD", buyer_email="b@x.dev", seller_email="s@x.dev", memo="escrow"
+        amount=Decimal("156.00"),
+        currency="USD",
+        buyer_email="b@x.dev",
+        seller_email="s@x.dev",
+        memo="escrow",
+        custom_id="trustee:" + "c" * 64,
     )
 
     create = next(r for r in rec.requests if r.url.path.endswith("/v2/checkout/orders"))
     body = json.loads(create.content)
+    assert body["purchase_units"][0]["custom_id"] == "trustee:" + "c" * 64  # the order names its contract
 
     assert body["intent"] == "AUTHORIZE"
     assert "payer" not in body["purchase_units"][0], "payer is not an Orders v2 purchase_unit field"
@@ -118,3 +124,24 @@ def test_capture_without_an_authorization_is_an_explicit_error():
     with pytest.raises(Exception) as exc:
         client.capture(EscrowOrder(order_id="ORDER123", authorization_id=None))
     assert "authorization_id" in str(exc.value)
+
+
+def test_a_deal_order_names_its_signed_contract():
+    """The PayPal order carries the contract's sha256 and the receipt carries the PayPal order."""
+    from test_trustee_flow import make_contract
+
+    from trustee.agents.trustee import contract_link
+
+    contract, trustee, _ = make_contract()
+    seen: dict = {}
+    real = trustee.paypal.create_and_authorize
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return real(**kwargs)
+
+    trustee.paypal.create_and_authorize = spy  # type: ignore[method-assign]
+    trustee.on_contract(contract)
+    assert seen["custom_id"] == contract_link(contract) == f"trustee:{contract.digest()}"
+    assert len(seen["custom_id"]) <= 127
+    assert trustee.snapshot()["escrow"]["details"]["custom_id"] == contract_link(contract)

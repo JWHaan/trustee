@@ -36,9 +36,9 @@ const SHORT: Record<string, { label: string; icon: ReactNode; line: string }> = 
 };
 
 const MODE_LABEL: Record<Mode, string> = {
-  auto: "Model: live, else replay",
-  live: "Model: live only",
-  scripted: "Model: replay",
+  auto: "Agents: live AI, replay if offline",
+  live: "Agents: live AI only",
+  scripted: "Agents: recorded replay",
 };
 
 interface Props {
@@ -90,7 +90,7 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
       <div className="picker-sub">
         <p className="picker-line">{selected ? SHORT[selected.name]?.line ?? selected.blurb : ""}</p>
         <label className="modesel">
-          <span className="sr-only">Negotiation model</span>
+          <span className="sr-only">How the agents negotiate</span>
           <select value={mode} onChange={(e) => onMode(e.target.value as Mode)} disabled={running}>
             {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
               <option key={m} value={m}>

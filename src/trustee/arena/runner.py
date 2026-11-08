@@ -129,6 +129,9 @@ class RunResult:
     refusal: str | None = None  # why Trustee refused the deal before any money was held, in its own words
     authority_outcome: str | None = None  # the intent check's verdict: autonomous | step_up | reject (None: no intent)
     verification: dict[str, Any] | None = None  # Trustee's own check of the delivered file
+    # Inputs for the evidence pack; not part of the public snapshot.
+    signed_contract: dict[str, Any] | None = None
+    trustee_snapshot: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {
@@ -535,6 +538,8 @@ class DealRunner:
 
     def _attach_receipt(self, result: RunResult, deal: Deal, trustee: Trustee, contract: Contract) -> None:
         """Sign the receipt of a finished in-process deal, check it offline, and put the verdict on the tape."""
+        result.signed_contract = contract.model_dump(mode="json")
+        result.trustee_snapshot = trustee.snapshot()
         if not deal.is_terminal:
             return
         events = self.ledger.tail(deal.deal_id)

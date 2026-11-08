@@ -71,6 +71,11 @@ REAUTH_RETRY_BACKOFF = timedelta(hours=1)
 MAX_RESUME_ATTEMPTS = 5
 
 
+def contract_link(contract: Contract) -> str:
+    """What Trustee stores on the PayPal order: the sha256 of the signed contract, so either record finds the other."""
+    return f"trustee:{contract.digest()}"
+
+
 def paypal_issue(exc: PayPalError) -> str:
     """PayPal's issue code from an error body (e.g. MAX_NUMBER_OF_PAYMENT_ATTEMPTS_EXCEEDED), else its name."""
     try:
@@ -242,6 +247,8 @@ class Trustee:
                 seller_email=self._seller_email,
                 memo=f"trustee escrow {contract.deal_id} ({contract.good.description[:60]})",
                 request_id=rid,
+                # The PayPal order names the signed contract it pays for; the receipt names the PayPal order.
+                custom_id=contract_link(contract),
                 **kwargs,
             )
         except PayPalError as exc:

@@ -53,6 +53,33 @@ Why this matters for PayPal, and how it would scale from this demo to a PayPal p
 [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
 verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
 
+## What Trustee stops
+
+Every row is an executable check in `tests/test_attacks.py`, run by CI. The table is generated from those same checks.
+
+<!-- attack-table:start -->
+| Attack | Trustee's defence | Result |
+|---|---|---|
+| Honest deal (control) | Pays the seller once | ✅ paid once |
+| Someone signs the contract as the seller with an unregistered key | Refused before PayPal | ✅ refused (401), PayPal never called |
+| The seller signs an "accept" as if it were the buyer | Refused; nothing captured | ✅ refused (401), nothing captured |
+| The buyer's agent agrees a price above its spending limit | Refused before PayPal | ✅ refused (403), PayPal never called |
+| The agent pays more than the human's signed instruction allows | Steps up to a person | ✅ stepped up to a person |
+| The human revokes the agent's limit after funds are held | Held for a person, no capture | ✅ held for a person, nothing captured |
+| Someone replays an older, looser signed limit | Refused | ✅ refused (409) |
+| The seller ships a junk file | Refunded on Trustee's own check | ✅ refunded on Trustee's own check |
+| The seller signs the contract's hash but hands over a different file | Refunded; the lie is caught | ✅ refunded, lie caught |
+| The buyer gets a correct file and claims it failed | Held for a person; no free refund | ✅ held for a person, no free refund |
+| The buyer under-reports valid rows to pay less | Pays by Trustee's own count | ✅ paid 90% (Trustee's count), not 52% |
+| The seller sells a price feed with stale prices | Refunded on the market check | ✅ refunded on the market check |
+| The buyer's accept arrives twice | Captured once | ✅ captured once |
+| The same deal is opened twice | Held once | ✅ held once |
+| The server dies right after PayPal holds the money | Finished on restart; one hold | ✅ finished on restart, one hold |
+| The database fails just before a payment | No PayPal call | ✅ refused (503), PayPal never called |
+
+16 of 16 defences held (2026-11-08, dry-run, `python scripts/attack_report.py`).
+<!-- attack-table:end -->
+
 ## What a deal reports
 
 Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status (data part) and in each arena run.
@@ -60,9 +87,12 @@ Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status 
 ```json
 {
   "status": "refunded",
-  "tone": "bad",
-  "headline": "Refunded: the buyer keeps 170.00 USD.",
-  "reasons": ["It failed the contract check \u201csha256 matches contract\u201d.", "sha256 does not match contract; ..."],
+  "tone": "neutral",
+  "headline": "Refunded: the buyer keeps $170.00.",
+  "reasons": [
+    "The delivery failed the contract: it isn't the file the contract names (its fingerprint is different).",
+    "Trustee checked the file itself, so this didn't rest on the buyer's word."
+  ],
   "next_step": null,
   "money": {"paid_to_seller": "0.00", "returned_to_buyer": "170.00", "held": "0.00"},
   "currency": "USD"
@@ -177,6 +207,8 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/deals/{id}/deliverable` | none (stored by sha256) | hand Trustee the file so it checks it itself |
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
 | `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
+| `GET /v1/deals/{id}/evidence` | none | signed dispute evidence pack: contract, delivery, Trustee's check, attestation, ruling, receipt, ledger |
+| `POST /v1/criteria/draft` | none | AI drafts checkable acceptance criteria from a buyer's request; code keeps only what the request says |
 | `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
 | `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
 | `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
@@ -207,6 +239,20 @@ contract's checks on those exact bytes (hash, schema and row rules, the Channel3
 result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
 payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
 scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
+
+**AI-drafted acceptance criteria.** `POST /v1/criteria/draft` turns a request such as "at least 5,000 orders with
+columns order_id, sku and refund_usd; no blank refund_usd" into contract criteria Trustee can check: a schema, a row
+count with required fields, the file hash, a market check for price feeds. The model proposes; a column or a number is
+kept only if the request contains it, and anything else comes back as a criterion a person decides. Trustee then runs
+those same criteria on the delivered file, so a data product with no hand-written checker is still verified
+(`src/trustee/criteria.py`).
+
+**Evidence for disputes.** Every deal has a signed evidence pack (`GET /v1/deals/{id}/evidence`, and a link on the
+arena page): the contract with both signatures, the seller's signed delivery, Trustee's own check of the file, the
+buyer's attestation, the ruling, the summary, the receipt, the PayPal ids and every ledger event with a re-check of the
+hash chain. `trustee.evidence.verify_evidence_pack` checks it offline; editing anything breaks the signature. Each
+PayPal order also carries `trustee:<contract sha256>` as its `custom_id`, so the PayPal record and Trustee's record
+find each other.
 
 **Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
 contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human
