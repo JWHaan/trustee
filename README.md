@@ -208,6 +208,7 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
 | `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
 | `GET /v1/deals/{id}/evidence` | none | signed dispute evidence pack: contract, delivery, Trustee's check, attestation, ruling, receipt, ledger |
+| `POST /v1/criteria/draft` | none | AI drafts checkable acceptance criteria from a buyer's request; code keeps only what the request says |
 | `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
 | `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
 | `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
@@ -238,6 +239,13 @@ contract's checks on those exact bytes (hash, schema and row rules, the Channel3
 result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
 payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
 scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
+
+**AI-drafted acceptance criteria.** `POST /v1/criteria/draft` turns a request such as "at least 5,000 orders with
+columns order_id, sku and refund_usd; no blank refund_usd" into contract criteria Trustee can check: a schema, a row
+count with required fields, the file hash, a market check for price feeds. The model proposes; a column or a number is
+kept only if the request contains it, and anything else comes back as a criterion a person decides. Trustee then runs
+those same criteria on the delivered file, so a data product with no hand-written checker is still verified
+(`src/trustee/criteria.py`).
 
 **Evidence for disputes.** Every deal has a signed evidence pack (`GET /v1/deals/{id}/evidence`, and a link on the
 arena page): the contract with both signatures, the seller's signed delivery, Trustee's own check of the file, the

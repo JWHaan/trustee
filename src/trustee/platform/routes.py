@@ -476,6 +476,24 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
             raise HTTPException(status_code=400, detail="deal_id in body does not match the path")
         return await call(service.on_delivery, deal_id, body)
 
+    @router.post(
+        "/v1/criteria/draft",
+        operation_id="draft_criteria",
+        tags=["Deals"],
+        summary="Draft checkable acceptance criteria from a buyer's request",
+        description=(
+            "AI proposes, code decides: from a plain-language request, returns contract criteria in a form Trustee can "
+            "check on the delivered file (schema, row count and required fields, file hash, market check). A column "
+            "or a row count is kept only if it appears in the request; anything else is returned as a criterion a "
+            'person decides. Nothing is stored. Body: `{"request": str, "sha256": str | null}`.'
+        ),
+        responses=_errors({422: "The request is empty or names nothing checkable."}),
+    )
+    async def draft_criteria(body: dict[str, Any]) -> JSONResponse:
+        request = str(body.get("request") or "")
+        sha256 = body.get("sha256")
+        return await call(service.draft_criteria, request, str(sha256) if sha256 else None)
+
     @router.get(
         "/v1/deals/{deal_id}/evidence",
         operation_id="get_evidence_pack",

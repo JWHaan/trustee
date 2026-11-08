@@ -1466,6 +1466,57 @@
         ]
       }
     },
+    "/v1/criteria/draft": {
+      "post": {
+        "description": "AI proposes, code decides: from a plain-language request, returns contract criteria in a form Trustee can check on the delivered file (schema, row count and required fields, file hash, market check). A column or a row count is kept only if it appears in the request; anything else is returned as a criterion a person decides. Nothing is stored. Body: `{\"request\": str, \"sha256\": str | null}`.",
+        "operationId": "draft_criteria",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The request is empty or names nothing checkable."
+          }
+        },
+        "summary": "Draft checkable acceptance criteria from a buyer's request",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
     "/v1/deals": {
       "post": {
         "description": "`contract.signatures` must hold a valid Ed25519 signature by the buyer and by the seller over the contract digest (sha256 of the canonical terms, excluding `signatures` and `transcript_ref`). The mandate gate then checks the buyer's spending mandate and the seller's receiving mandate. Passing the gate opens an escrow: PayPal Orders v2 `AUTHORIZE`, so the buyer's funds are held and not captured. Returns 201 for a new deal. Repeating the identical contract returns 200 with the current view. A different contract under the same `deal_id` is a 409. A 502 means PayPal failed; the body includes the deal view, and retrying the same request is safe.",
