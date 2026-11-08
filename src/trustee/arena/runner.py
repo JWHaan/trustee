@@ -72,7 +72,6 @@ from ..ledger import Event, Ledger
 from ..llm import LLM
 from ..mandate import Mandate, MandateEngine
 from ..network import Northwind, Tidewater
-from ..network.remote import RemoteNetwork
 from ..paypal import EscrowOrder, PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Accept, Contract, Counter, Offer
 from ..receipts import build_receipt, load_signing_key
@@ -660,7 +659,6 @@ class DealRunner:
                 northwind=northwind,
                 tidewater=tidewater,
                 demo_funding=self.demo_funding,
-                remote=RemoteNetwork.from_env(),
             )
             done = flow.run()
         finally:
