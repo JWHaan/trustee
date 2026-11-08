@@ -77,6 +77,7 @@ from ..protocol import Accept, Contract, Counter, Offer
 from ..receipts import build_receipt, load_signing_key
 from ..state import Deal, DealState
 from ..store import Store
+from ..summary import summarize
 from ..verify import verify_receipt
 from .a2a_flow import A2AFlow
 from .approval import ApprovalGate, ApprovalWait, wait_for_approval
@@ -124,6 +125,7 @@ class RunResult:
     receipt_verified: bool | None = None  # the receipt checked offline (signature + ledger chain) at the end of the run
     human_present: bool | None = None  # False when the buyer's agent paid under its intent mandate, no human click
     settlement: dict[str, Any] | None = None  # pro-rata settlement: captured, released, units
+    refusal: str | None = None  # why Trustee refused the deal before any money was held, in its own words
 
     def snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {
@@ -148,6 +150,23 @@ class RunResult:
         }
         if self.settlement is not None:
             snap["settlement"] = self.settlement
+        currency = "USD"
+        price_clause = (self.contract or {}).get("price") or ""
+        if " " in price_clause:
+            currency = price_clause.rsplit(" ", 1)[1]
+        attest = self.attest or {}
+        snap["summary"] = summarize(
+            state=self.state,
+            price=self.price,
+            currency=currency,
+            escrow_status=(self.escrow or {}).get("status"),
+            ruling=self.ruling,
+            settlement=self.settlement,
+            outcome=self.outcome,
+            refusal=self.refusal,
+            buyer_reason=attest.get("reason"),
+            human_present=self.human_present,
+        )
         return snap
 
 
@@ -399,6 +418,10 @@ class DealRunner:
                 "approval_failed",
             )
             result.error = None if outcome in clean else decision.action
+            if decision.explanation:
+                result.refusal = decision.explanation
+            elif decision.report is not None and not decision.report.ok:
+                result.refusal = decision.report.summarize()
             self._attach_receipt(result, deal, trustee, contract)
             return result
 
@@ -865,7 +888,7 @@ class DealRunner:
                 {
                     "decision": e.payload.get("decision"),
                     "clause": e.payload.get("clause"),
-                    "reasoning": e.payload.get("reasoning"),
+                    "reasoning": e.payload.get("reasoning") or e.payload.get("note"),
                     "objective": e.payload.get("objective"),
                 }
                 for e in reversed(self.ledger.tail(deal.deal_id, kinds=("ruling",)))

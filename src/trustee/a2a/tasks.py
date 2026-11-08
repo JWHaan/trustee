@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..protocol import Contract
+from ..summary import summarize
 from .models import (
     Artifact,
     Message,
@@ -175,6 +176,23 @@ def _status_text(state: TaskState, snapshot: dict[str, Any], contract: dict[str,
     return f"Deal is {deal}."
 
 
+def _summary(snapshot: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+    """The same plain-language summary the REST deal view and the arena carry (trustee.summary)."""
+    escrow = snapshot.get("escrow") or {}
+    authority = snapshot.get("autonomy") or {}
+    return summarize(
+        state=snapshot["state"],
+        price=contract.get("price"),
+        currency=contract.get("currency") or "USD",
+        escrow_status=escrow.get("status"),
+        ruling=snapshot.get("ruling"),
+        settlement=snapshot.get("settlement"),
+        needs_attention=snapshot.get("needs_attention"),
+        dispute_deadline=snapshot.get("dispute_deadline"),
+        human_present=authority.get("human_present") if authority else None,
+    )
+
+
 def deal_task(record: dict[str, Any], *, include_artifacts: bool = True) -> Task:
     """Build the Task for one deal from `DealService.record` (or an equivalent store row)."""
     snapshot, contract = record["snapshot"], record["contract"]
@@ -186,7 +204,9 @@ def deal_task(record: dict[str, Any], *, include_artifacts: bool = True) -> Task
         role=Role.AGENT,
         parts=[
             text_part(_status_text(state, snapshot, contract)),
-            data_part({"dealState": snapshot["state"], "a2aState": state.value}),
+            data_part(
+                {"dealState": snapshot["state"], "a2aState": state.value, "summary": _summary(snapshot, contract)}
+            ),
         ],
         contextId=deal_id,
         taskId=deal_id,
