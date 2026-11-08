@@ -1,0 +1,56 @@
+# Every push and pull request: lint, format, types and the full test suite for the Python service, and a type-check
+# and production build for the arena UI. The suite runs in dry-run mode: no PayPal, LLM or other credentials needed.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check src tests scripts examples
+      - name: Format
+        run: uv run ruff format --check src tests scripts examples
+      - name: Types
+        run: uv run mypy
+      - name: Tests
+        run: uv run pytest -q
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: arena/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: arena/ui/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Types
+        run: npx tsc --noEmit -p .
+      - name: Build
+        run: npm run build
