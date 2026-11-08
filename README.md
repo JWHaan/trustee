@@ -274,7 +274,7 @@ python examples/a2a_network.py --cheat    # Tidewater ships junk: refunded, noth
 
 Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#the-a2a-network-northwind-and-tidewater-as-agents).
 
-### SDKs and Postman
+### Client libraries and Postman
 
 - **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route, every `/.well-known` route and the `/a2a` endpoint. Regenerate it with
   `python scripts/export_openapi.py` after an API change. `tests/test_openapi.py` fails when the file is stale.
@@ -282,10 +282,10 @@ Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#t
   deal over A2A (folder 4).
   Import it with the environment file in the same folder. Its signed bodies use public demo keys, so do not
   point it at a server that holds money.
-- **Generated SDKs.** The `sdks` workflow builds Python and TypeScript SDKs with APIMatic. It needs the
-  `APIMATIC_API_KEY` secret and skips with a notice until that secret is set.
+- **Python client.** `trustee.client.TrusteeClient` signs registrations, mandates and revocations, and refuses to
+  send a contract, delivery or attestation that the right party has not signed.
 
-Setup, usage sketches and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
+The Python client, retry rules and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
 
 ## Autonomous payments: consent once, then no clicks
 
@@ -373,7 +373,7 @@ src/trustee/
     rows.py          ledger Event -> grid row
     fixtures/        goods store, manifest, scenarios, transcripts, Channel3 recordings, CLI runners
 arena/ui/            Vite + React + AG Grid Community
-openapi/ postman/    API description and a runnable collection (see SDKs and Postman)
+openapi/ postman/    API description and a runnable collection (see Client libraries and Postman)
 examples/            a2a_deal.py, a2a_network.py, sandbox_poc.py
 tests/               650+ tests: agents, runner, API, SSE, PayPal request shapes, money path, identity,
                      mandates, intents, store, platform API, approval, webhooks, A2A, partial capture,
