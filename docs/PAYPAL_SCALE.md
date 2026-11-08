@@ -81,16 +81,20 @@ and the arbiter treats a reported `sha256_check: mismatch` or a failed checker a
 (`agents/arbiter.py` `_objective_breach`, `agents/trustee.py` `_arbitrate`). Trustee never checks that report
 against the hashes it already holds.
 
-Reproduced against the current code: the contract commits to hash `H`, the seller delivers and signs hash `H`, the
-buyer rejects with `{"sha256_check": "mismatch"}`, and the deal ends `VOIDED`. **The buyer keeps a correct file
+Reproduced against the code at the time: the contract commits to hash `H`, the seller delivers and signs hash `H`,
+the buyer rejects with `{"sha256_check": "mismatch"}`, and the deal ends `VOIDED`. **The buyer keeps a correct file
 and gets the money back.** In the demo the buyer is honest. At PayPal scale this is the first exploit anyone would
 try.
 
 Fix it in two steps:
 
-1. **Now, small change:** before ruling on a hash-mismatch claim, compare the contract's `sha256` with the hash the
-   seller signed in `Delivery`. If they match, the buyer's claim is contradicted: uphold, and send the deal to a
-   human or a neutral re-check. This closes the free-file-by-false-claim case for hash criteria.
+1. **Done, small change:** before ruling on a hash-mismatch claim, Trustee compares the contract's `sha256` with the
+   hash the seller signed in `Delivery` (`Trustee._contradicted_hash_claim`). If they match, the buyer's claim is
+   contradicted: the deal goes to `DISPUTED` with the funds still held, the ruling is `uphold` and the deal is
+   flagged `needs_attention` for a human. This closes the free-file-by-false-claim case for hash criteria.
+   **Trade-off:** a seller who signs a false hash is now caught by that human review instead of automatically.
+   If nobody acts within the dispute window, the existing rule for an upheld dispute applies and the seller is
+   paid. Step 2 removes the need to choose.
 2. **For scale: Trustee verifies the delivery.** The seller uploads to content-addressed storage that Trustee
    controls (or a presigned bucket). Trustee computes the hash and runs the contract's checks itself: schema, row
    rules, the Channel3 market check, a test suite or an API SLA probe. Trustee then releases the file to the buyer
