@@ -354,12 +354,12 @@ src/trustee/
   alerts.py          human alerts (Zapier Catch Hook) when money needs a decision
   channel3.py        Channel3 client; pricefeed.py checks a delivered price feed against it
   analyst.py         ask the Elastic Agent Builder ledger analyst over A2A
-  llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama, Astropods AI Gateway fallback)
+  llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama)
   agents/            trustee, buyer, seller, negotiator, arbiter
   platform/          public /v1 API, reputation routes, A2A Agent Card, DealService (durable multi-deal host)
   a2a/               A2A JSON-RPC server + client, skills, deal tasks, push notifications
   network/           Northwind and Tidewater as A2A agents (cards, skills, signed negotiation, delivery,
-                     Zapier MCP back office, Astropods hosting)
+                     Zapier MCP back office)
   elastic/           optional ledger shipping to Elasticsearch, ES|QL reputation
   client.py          TrusteeClient SDK
   arena/
@@ -373,12 +373,11 @@ src/trustee/
     rows.py          ledger Event -> grid row
     fixtures/        goods store, manifest, scenarios, transcripts, Channel3 recordings, CLI runners
 arena/ui/            Vite + React + AG Grid Community
-deploy/astropods/    Northwind and Tidewater as hosted containers
 openapi/ postman/    API description and a runnable collection (see SDKs and Postman)
 examples/            a2a_deal.py, a2a_network.py, sandbox_poc.py
 tests/               650+ tests: agents, runner, API, SSE, PayPal request shapes, money path, identity,
                      mandates, intents, store, platform API, approval, webhooks, A2A, partial capture,
-                     Elastic, Channel3, Zapier MCP, Astropods, arena scenarios
+                     Elastic, Channel3, Zapier MCP, durability, arena scenarios
 ```
 
 ## Configuration
@@ -427,7 +426,7 @@ tape. It is test money, and the page says so.
 ## Status
 
 P1 (runner + service) and P2 (UI) are built and green, along with the platform API, A2A, intent-mandate autonomy,
-partial capture and the optional Elastic, Zapier, Channel3 and Astropods integrations. The payer-approval flow, PayPal webhooks and
+partial capture and the optional Elastic, Zapier and Channel3 integrations. The payer-approval flow, PayPal webhooks and
 reconciliation are implemented and tested against a mocked PayPal. P3, the real-sandbox run, is still open:
 nobody has run `examples/sandbox_poc.py` or the webhook path with credentials, so the real-PayPal behavior is
 unverified. `docs/BUILD-CRITIQUE.md` §1 lists what was broken in the adapter.

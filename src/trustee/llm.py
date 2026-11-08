@@ -4,13 +4,11 @@ Works with NIM (default), OpenAI, Ollama, or any OpenAI-compatible endpoint
 via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL. Keeps the dependency surface tiny and
 the demo reproducible: temperature pinned low for deterministic-ish behavior.
 
-Two knobs exist because hosted models change under us:
+Knobs that exist because hosted models change under us:
   * LLM_EXTRA_BODY — a JSON object merged into every request body. Reasoning
     models need it: NIM's Nemotron 3.5 spends its whole token budget "thinking"
     and returns empty content unless it gets
     `{"chat_template_kwargs": {"enable_thinking": false}}`.
-  * ASTRO_GATEWAY_URL / ASTRO_GATEWAY_API_KEY / MODEL_DEFAULT — the Astropods AI Gateway, injected into a hosted
-    agent. A fallback only: used when LLM_BASE_URL and LLM_API_KEY are both unset; LLM_MODEL beats MODEL_DEFAULT.
   * LLM_TIMEOUT — seconds per request (default 30). The OpenAI client's own
     default is ten minutes, which would freeze a demo run on one slow call; a
     timeout instead raises, and the runner falls back to the recorded moves.
@@ -47,21 +45,6 @@ def _extra_body_from_env() -> dict[str, Any] | None:
     return value
 
 
-def gateway_from_env() -> tuple[str, str, str | None] | None:
-    """(base_url, api_key, model) of the Astropods AI Gateway, or None when it does not apply.
-
-    It applies only when the container has both ASTRO_GATEWAY_URL and ASTRO_GATEWAY_API_KEY and the operator set
-    neither LLM_BASE_URL nor LLM_API_KEY: an explicit LLM_* setting always wins, so a gateway key is never sent to
-    another endpoint. The model is MODEL_DEFAULT, which LLM_MODEL overrides."""
-    if os.environ.get("LLM_BASE_URL") or os.environ.get("LLM_API_KEY"):
-        return None
-    url = (os.environ.get("ASTRO_GATEWAY_URL") or "").strip().rstrip("/")
-    key = os.environ.get("ASTRO_GATEWAY_API_KEY") or ""
-    if not url or not key:
-        return None
-    return f"{url}/v1", key, os.environ.get("MODEL_DEFAULT") or None
-
-
 class LLM:
     def __init__(
         self,
@@ -72,20 +55,13 @@ class LLM:
         extra_body: dict[str, Any] | None = None,
         timeout: float | None = None,
     ):
-        gateway = gateway_from_env()
         self.client = OpenAI(
-            base_url=base_url
-            or os.environ.get("LLM_BASE_URL")
-            or (gateway[0] if gateway else "https://integrate.api.nvidia.com/v1"),
-            api_key=api_key or os.environ.get("LLM_API_KEY") or (gateway[1] if gateway else "no-key"),
+            base_url=base_url or os.environ.get("LLM_BASE_URL") or "https://integrate.api.nvidia.com/v1",
+            api_key=api_key or os.environ.get("LLM_API_KEY") or "no-key",
             timeout=timeout if timeout is not None else float(os.environ.get("LLM_TIMEOUT") or DEFAULT_TIMEOUT),
             max_retries=1,
         )
-        self.model: str = (
-            model
-            if model is not None
-            else (os.environ.get("LLM_MODEL") or (gateway[2] if gateway else None) or DEFAULT_MODEL)
-        )
+        self.model: str = model if model is not None else (os.environ.get("LLM_MODEL") or DEFAULT_MODEL)
         self.temperature = temperature
         self.extra_body = extra_body if extra_body is not None else _extra_body_from_env()
         self.last_raw: str = ""
