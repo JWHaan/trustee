@@ -12,38 +12,48 @@ import type { Row } from "./api";
 import { actorName, safeLink } from "./describe";
 
 const theme = themeQuartz.withParams({
-  backgroundColor: "#0d1015",
-  foregroundColor: "#eceff4",
-  headerBackgroundColor: "#0d1015",
-  headerTextColor: "#a7b0bd",
-  borderColor: "#1e2430",
-  oddRowBackgroundColor: "#0a0d11",
+  backgroundColor: "#0e1521",
+  foregroundColor: "#e9eef6",
+  headerBackgroundColor: "#0e1521",
+  headerTextColor: "#a6b2c5",
+  borderColor: "#1a253a",
+  oddRowBackgroundColor: "#0c121d",
   fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif",
-  fontSize: "12px",
-  headerFontSize: "11px",
+  fontSize: "12.5px",
+  headerFontSize: "12px",
   headerFontWeight: 600,
   rowHeight: 30,
-  headerHeight: 32,
+  headerHeight: 34,
   cellHorizontalPadding: 10,
-  accentColor: "#f5b544",
+  accentColor: "#9cc8ff",
   wrapperBorder: false,
   wrapperBorderRadius: 0,
-  rowHoverColor: "rgba(245, 181, 68, 0.07)",
+  rowHoverColor: "rgba(156, 200, 255, 0.06)",
 });
 
 const KindCell = ({ value }: ICellRendererParams<Row, string>) =>
   value ? <span className={`kpill k-${value}`}>{value}</span> : null;
 
-const CheckCell = ({ value }: ICellRendererParams<Row, string>) =>
-  value === "verified" ? (
-    <span className="badge good">
-      <Check size={11} strokeWidth={3} aria-hidden="true" /> verified
+/** Identity rows: whose signature was checked and the result, in one cell. */
+const CheckCell = ({ value, data }: ICellRendererParams<Row, string>) => {
+  const signer = data?.signer ? actorName(data.signer) : "";
+  const who = signer ? <span className={`signer actor-${signer}`}>{signer}</span> : null;
+  return value === "verified" ? (
+    <span className="check-cell">
+      <span className="badge good">
+        <Check size={11} strokeWidth={3} aria-hidden="true" /> Verified
+      </span>
+      {who}
     </span>
   ) : value === "rejected" ? (
-    <span className="badge bad">
-      <X size={11} strokeWidth={3} aria-hidden="true" /> rejected
+    <span className="check-cell">
+      <span className="badge bad">
+        <X size={11} strokeWidth={3} aria-hidden="true" /> Rejected
+      </span>
+      {who}
     </span>
   ) : null;
+};
 
 const LinkCell = ({ value }: ICellRendererParams<Row, string>) => {
   const href = safeLink(value ?? "");
@@ -54,54 +64,65 @@ const LinkCell = ({ value }: ICellRendererParams<Row, string>) => {
   ) : null;
 };
 
+// State rows read "DRAFT → NEGOTIATING" in the event column instead of a mostly empty column of their own.
 const COLUMNS: ColDef<Row>[] = [
   {
     field: "ts",
-    headerName: "time",
-    width: 100,
+    headerName: "Time",
+    width: 92,
     valueGetter: (p) => (p.data?.ts ?? "").slice(11, 21),
     cellClass: "mono dim",
   },
   {
-    headerName: "actor",
-    width: 96,
+    colId: "actor",
+    headerName: "Actor",
+    width: 116,
     valueGetter: (p) => actorName(p.data?.actor ?? ""),
     cellClass: (p) => `actor-${p.value}`,
   },
-  { field: "kind", headerName: "kind", width: 92, cellRenderer: KindCell },
-  { field: "event", headerName: "event", width: 132, cellClass: "mono" },
+  { field: "kind", headerName: "Kind", width: 100, cellRenderer: KindCell },
   {
-    headerName: "signer",
-    width: 96,
-    valueGetter: (p) => (p.data?.signer ? actorName(p.data.signer) : ""),
-    cellClass: (p) => `actor-${p.value}`,
-  },
-  { field: "check", headerName: "check", width: 104, cellRenderer: CheckCell },
-  {
-    headerName: "state",
+    colId: "event",
+    headerName: "Event",
     width: 190,
-    valueGetter: (p) => (p.data?.state_from ? `${p.data.state_from} → ${p.data.state_to}` : ""),
-    cellClass: "cell-arrow mono",
+    valueGetter: (p) => (p.data?.state_from ? `${p.data.state_from} → ${p.data.state_to}` : (p.data?.event ?? "")),
+    cellClass: (p) => (p.data?.state_from ? "mono cell-arrow" : "mono"),
+    tooltipValueGetter: (p) => (p.data?.state_from ? `${p.data.event}: ${p.value}` : undefined),
+  },
+  {
+    field: "check",
+    headerName: "Signature",
+    width: 150,
+    cellRenderer: CheckCell,
+    getQuickFilterText: (p) => `${p.value ?? ""} ${p.data?.signer ?? ""}`,
   },
   {
     field: "price",
-    headerName: "amount",
-    width: 92,
+    headerName: "Amount",
+    width: 84,
     type: "rightAligned",
     headerClass: "ag-right-aligned-header",
     cellClass: "cell-price mono",
   },
-  { field: "order_id", headerName: "order", width: 130, cellClass: "mono dim", tooltipField: "order_id" },
-  { field: "sha", headerName: "sha256", width: 130, cellClass: "mono dim", tooltipField: "sha" },
-  { field: "link", headerName: "approval", width: 104, cellRenderer: LinkCell },
-  { field: "note", headerName: "note", flex: 1, minWidth: 260, tooltipField: "note" },
+  { field: "note", headerName: "Note", flex: 1, minWidth: 160, tooltipField: "note" },
+  { field: "link", headerName: "Approval", width: 104, cellRenderer: LinkCell },
+  { field: "order_id", headerName: "PayPal order", width: 140, cellClass: "mono dim", tooltipField: "order_id" },
+  { field: "sha", headerName: "sha256", width: 140, cellClass: "mono dim", tooltipField: "sha" },
 ];
+
+/**
+ * Below these grid widths the order and hash columns, then kind and signature, hide so the note stays readable.
+ * Nothing is lost: the row tint shows the kind and the note names whose signature was checked.
+ */
+const WIDE = 1180;
+const NARROW = 820;
 
 const KINDS = ["all", "msg", "identity", "mandate", "paypal", "state", "policy", "receipt", "ruling", "api"] as const;
 type KindFilter = (typeof KINDS)[number];
 
 export function LedgerGrid({ rows }: { rows: Row[] }) {
   const gridRef = useRef<AgGridReact<Row>>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [kind, setKind] = useState<KindFilter>("all");
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
@@ -117,6 +138,31 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
     });
     return c;
   }, [rows]);
+
+  // Which columns fit is decided from the grid's own width, so the columns follow the panel, not the window.
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    const ro = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const hasLink = rows.some((r) => r.link);
+  // Through the API rather than columnDefs: only setColumnsVisible makes AG Grid re-share the note's flex width.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const api = gridRef.current?.api;
+    if (!ready || !api || !width) return;
+    const hidden = new Set<string>();
+    if (!hasLink) hidden.add("link");
+    if (width < WIDE) ["order_id", "sha"].forEach((c) => hidden.add(c));
+    if (width < NARROW) ["kind", "check"].forEach((c) => hidden.add(c));
+    const ids = COLUMNS.map((c) => c.colId ?? c.field ?? "");
+    api.setColumnsVisible(ids.filter((id) => !hidden.has(id)), true);
+    api.setColumnsVisible([...hidden], false);
+  }, [ready, width, hasLink]);
 
   // External filter: AG Grid re-evaluates it only when told the filter state changed.
   useEffect(() => {
@@ -166,7 +212,7 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
           follow live
         </button>
       </div>
-      <div className="grid-wrap">
+      <div className="grid-wrap" ref={wrapRef}>
         <AgGridReact<Row>
           ref={gridRef}
           theme={theme}
@@ -180,6 +226,7 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
           tooltipShowDelay={400}
           quickFilterText={search}
           onModelUpdated={(e) => setShown(e.api.getDisplayedRowCount())}
+          onGridReady={() => setReady(true)}
           isExternalFilterPresent={() => kind !== "all"}
           doesExternalFilterPass={(node: IRowNode<Row>) => kind === "all" || node.data?.kind === kind}
           rowClassRules={{

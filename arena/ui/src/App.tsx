@@ -19,6 +19,12 @@ import { pendingApproval } from "./describe";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// `?mode=scripted` makes the auto-started run a replay too: no model or PayPal call while demoing or testing.
+function initialMode(): Mode {
+  const m = new URLSearchParams(window.location.search).get("mode");
+  return m === "live" || m === "scripted" ? m : "auto";
+}
+
 export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -26,7 +32,7 @@ export default function App() {
   const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
   const [warming, setWarming] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
-  const [mode, setMode] = useState<Mode>("auto");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [current, setCurrent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);

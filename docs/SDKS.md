@@ -68,8 +68,12 @@ from trustee.identity import AgentKey
 from trustee.protocol import Delivery
 
 key = AgentKey.from_private_bytes(base64.urlsafe_b64decode(os.environ["SELLER_AGENT_KEY"]))
-delivery = Delivery(sender="demo-seller-agent", deal_id="deal-123", deliverable_ref="report.csv",
-                    content_hash="<sha256 hex of the delivered bytes>").sign(key)
+delivery = Delivery(
+    sender="demo-seller-agent",
+    deal_id="deal-123",
+    deliverable_ref="report.csv",
+    content_hash="<sha256 hex of the delivered bytes>",
+).sign(key)
 body = delivery.model_dump(mode="json")  # the body of POST /v1/deals/{id}/delivery
 ```
 
