@@ -143,7 +143,13 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       key: "verified",
       label: "Verified",
       status: attest ? (attestVerdict === "reject" ? "failed" : "done") : "todo",
-      detail: attest ? (attestVerdict === "reject" ? "check failed" : "check passed") : "",
+      detail: attest
+        ? attestVerdict === "reject"
+          ? "check failed"
+          : rows.some((r) => r.kind === "verification")
+            ? "checked by Trustee"
+            : "check passed"
+        : "",
     },
     {
       key: "final",
@@ -286,14 +292,22 @@ export function deriveChecks(rows: Row[], ruleLabel: (rule: string) => string): 
   }
   if (spending.length) groups.push({ title: "Spending rules", items: spending });
 
+  const delivery: CheckItem[] = [];
+  const own = rows.find((r) => r.kind === "verification");
+  if (own) {
+    delivery.push({
+      id: own.id,
+      ok: own.result === "pass",
+      label: own.result === "pass" ? "Trustee's own check: the file matches" : "Trustee's own check: the file does not match",
+      detail: own.note.replace(/^Trustee checked the delivered file itself: /, ""),
+    });
+  }
   const verdicts = rows.filter((r) => r.kind === "msg" && r.event === "attestation");
   if (verdicts.length) {
     const last = verdicts[verdicts.length - 1];
     const ok = last.verdict.toLowerCase() !== "reject";
-    groups.push({
-      title: "Delivery",
-      items: [{ id: last.id, ok, label: ok ? "The file matches the contract" : "The file does not match the contract", detail: last.note }],
-    });
+    delivery.push({ id: last.id, ok, label: ok ? "The buyer accepted the file" : "The buyer rejected the file", detail: last.note });
   }
+  if (delivery.length) groups.push({ title: "Delivery", items: delivery });
   return groups;
 }

@@ -20,6 +20,7 @@ from .intent import IntentMandate
 from .mandate import Mandate
 from .platform.wire import (
     agent_signing_bytes,
+    download_signing_bytes,
     funding_revoke_signing_bytes,
     funding_setup_signing_bytes,
     intent_revoke_signing_bytes,
@@ -60,6 +61,10 @@ class TrusteeClient:
     def _request(self, method: str, path: str, json: Any = None, *, operator: bool = False) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self._operator_token}"} if operator and self._operator_token else {}
         resp = self._http.request(method, f"{self.base_url}{path}", json=json, headers=headers)
+        return self._json_or_raise(resp)
+
+    @staticmethod
+    def _json_or_raise(resp: httpx.Response) -> dict[str, Any]:
         try:
             body = resp.json()
         except ValueError:
@@ -158,6 +163,25 @@ class TrusteeClient:
         if missing:
             raise ValueError(f"contract is missing signatures from: {', '.join(missing)}")
         return self._request("POST", "/v1/deals", contract.model_dump(mode="json"))
+
+    def upload_deliverable(self, deal_id: str, data: bytes) -> dict[str, Any]:
+        """Hand Trustee the delivered file, so it can check it itself. Call before `deliver`."""
+        resp = self._http.post(
+            f"{self.base_url}/v1/deals/{deal_id}/deliverable",
+            content=data,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        return self._json_or_raise(resp)
+
+    def download_deliverable(self, deal_id: str, buyer_key: AgentKey) -> bytes:
+        """The buyer's copy of the file, from Trustee, once the payment has settled."""
+        signature = buyer_key.sign(download_signing_bytes(deal_id))
+        resp = self._http.get(
+            f"{self.base_url}/v1/deals/{deal_id}/deliverable", headers={"X-Trustee-Signature": signature}
+        )
+        if resp.status_code >= 400:
+            self._json_or_raise(resp)
+        return resp.content
 
     def deliver(self, delivery: Delivery) -> dict[str, Any]:
         if not delivery.signature:

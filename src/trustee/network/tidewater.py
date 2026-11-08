@@ -435,6 +435,22 @@ class Tidewater(NetworkAgent):
         note = "booked" if result.ok else f"failed ({result.error})"
         self.hop(self.identity.agent_id, "zapier", "mcp", result.action, note)
 
+    def _hand_to_trustee(self, deal_id: str, payload: bytes) -> None:
+        """Give Trustee the same bytes, so it checks the file itself instead of relying on the buyer's word.
+        Best effort: a Trustee without the upload route still settles on the buyer's check."""
+        if not self.trustee_url:
+            return
+        try:
+            resp = self.http.post(
+                f"{self.trustee_url}/v1/deals/{deal_id}/deliverable",
+                content=payload,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            note = f"file handed to Trustee ({resp.status_code})"
+        except httpx.HTTPError as exc:
+            note = f"could not hand the file to Trustee ({type(exc).__name__})"
+        self.hop(self.identity.agent_id, "trustee", "http", "upload-deliverable", note)
+
     def _deliver(self, deal_id: str, trigger: str) -> None:
         """Ship the CSV to the buyer, then tell Trustee. Safe to run twice: the second run does nothing."""
         with self._lock:
@@ -483,6 +499,7 @@ class Tidewater(NetworkAgent):
             if not isinstance(sent, Task) or sent.status.state != TaskState.COMPLETED:
                 detail = (refusal_of(sent) or {}).get("detail") if isinstance(sent, Task) else "no task"
                 raise RuntimeError(f"the buyer did not accept the delivery: {detail}")
+            self._hand_to_trustee(deal_id, payload)
             recorded = self._trustee().skill("record-delivery", delivery.model_dump(mode="json"), task_id=deal_id)
             refused = refusal_of(recorded) if isinstance(recorded, Task) else None
             if refused is not None:

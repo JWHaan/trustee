@@ -88,6 +88,10 @@ def to_row(ev: Event, seq: int) -> dict[str, Any]:
         # Policy rows: `rule` is the intent-mandate rule id, `result` is pass / fail (or the decision for a summary
         # row). `authority` marks a receipt row: who authorized the payment.
         "rule": str(p.get("rule") or "") if ev.kind == "policy" else "",
-        "result": _policy_result(p) if ev.kind == "policy" else "",
+        "result": _policy_result(p)
+        if ev.kind == "policy"
+        else ("pass" if p.get("ok") else "fail")
+        if ev.kind == "verification"
+        else "",
         "authority": _authority(p) if ev.kind == "receipt" else "",
     }

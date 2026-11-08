@@ -57,6 +57,7 @@ from ..partial import PartialSettlement, compute_partial
 from ..paypal import EscrowOrder, PayPalClient, PayPalError
 from ..protocol import Attest, Contract, Delivery, verify_signature
 from ..state import Deal, DealState, IllegalTransition
+from ..verification import Verification
 from .arbiter import Judge, Ruling
 
 log = logging.getLogger(__name__)
@@ -150,6 +151,10 @@ class Trustee:
         # that host's hook: it must make the snapshot durable or raise, and when it raises no PayPal call is made.
         self.pending_money: dict[str, Any] | None = None
         self.before_money: Callable[[Contract], None] | None = None
+        # Trustee's own check of the delivered file (trustee.verification). `verifier` is set by a host that holds the
+        # seller's file; it returns None when there is no file to check, and the buyer's evidence is then all there is.
+        self.verifier: Callable[[Contract, Delivery], Verification | None] | None = None
+        self._verification: dict[str, Any] | None = None
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------ public API
@@ -355,8 +360,33 @@ class Trustee:
                     "note": "hash recorded in ledger for arbitration audit",
                 },
             )
+            self._verify_delivery(contract, delivery)
             self._explanation("delivery", contract, "delivery recorded; awaiting buyer attestation")
             return TrusteeDecision("delivered", self.deal, escrow=escrow)
+
+    def _verify_delivery(self, contract: Contract, delivery: Delivery) -> None:
+        """Run Trustee's own check of the delivered bytes, when the host has them, and put the result on the ledger."""
+        if self.verifier is None:
+            return
+        try:
+            found = self.verifier(contract, delivery)
+        except Exception:  # noqa: BLE001 - a broken check leaves the buyer's evidence as the only evidence
+            log.exception("deal %s: delivery verification failed to run", self.deal.deal_id)
+            return
+        if found is None:
+            self._log("note", {"op": "verification", "explanation": "the seller gave Trustee no file to check"})
+            return
+        self._verification = found.as_dict()
+        self._log(
+            "verification",
+            {
+                "event": "trustee_check",
+                "ok": found.passed,
+                "hash_ok": found.hash_ok,
+                "sha256": (found.sha256_received or "")[:16],
+                "note": found.note(),
+            },
+        )
 
     def on_attest(self, attest: Attest, contract: Contract, now: datetime | None = None) -> TrusteeDecision:
         """Buyer's verdict. Accept -> capture. Reject -> dispute path (or void).
@@ -376,10 +406,14 @@ class Trustee:
         if attest.verdict == "accept":
             return self._settle(contract, "buyer attested accept; funds captured", now=now)
 
-        # reject, but the contract allows pro-rata settlement and the buyer's machine-checked counts
-        # qualify: capture the valid share. The amount is arithmetic on the counts, never a judge's call.
+        # reject, but the contract allows pro-rata settlement and the machine-checked counts qualify: capture the
+        # valid share. The amount is arithmetic on the counts, never a judge's call. When Trustee checked the file
+        # itself, its counts replace the buyer's.
         if self._ruling is None:
-            partial = compute_partial(contract, attest.evidence)
+            evidence = dict(attest.evidence)
+            if self._verification is not None:
+                evidence.update(Verification.from_dict(self._verification).evidence())
+            partial = compute_partial(contract, evidence)
             if partial is not None:
                 return self._settle(
                     contract,
@@ -393,10 +427,11 @@ class Trustee:
         self.deal.transition(DealState.DISPUTED, f"buyer rejected: {attest.reason[:120]}")
         if self._ruling is None:
             # Decided once: a retry after a failed void must not re-roll the ruling.
-            contradicted = self._contradicted_hash_claim(attest, contract)
-            if contradicted is not None:
-                self._ruling = contradicted
-                self.needs_attention = contradicted.reasoning[:300]
+            ruled = self._ruling_from_verification() or self._contradicted_hash_claim(attest, contract)
+            if ruled is not None:
+                self._ruling = ruled
+                if ruled.decision == "uphold":
+                    self.needs_attention = ruled.reasoning[:300]
             else:
                 _, self._ruling = self._arbitrate(attest, contract)
             ruling = self._ruling
@@ -1043,6 +1078,8 @@ class Trustee:
                 snap["reauthorized_at"] = _iso(self.reauthorized_at)
             if self.pending_money is not None:
                 snap["pending_money"] = dict(self.pending_money)
+            if self._verification is not None:
+                snap["verification"] = dict(self._verification)
             return snap
 
     @classmethod
@@ -1095,12 +1132,29 @@ class Trustee:
         trustee.reauth_count = int(snapshot.get("reauth_count") or 0)
         trustee.reauthorized_at = _parse(snapshot.get("reauthorized_at"))
         trustee.pending_money = snapshot.get("pending_money")
+        trustee._verification = snapshot.get("verification")
         return trustee
 
     def _raise_escrow(self) -> EscrowOrder:
         if self._escrow is None:
             raise IllegalTransition(self.deal.deal_id, self.deal.state, DealState.DELIVERED)
         return self._escrow
+
+    def _ruling_from_verification(self) -> Ruling | None:
+        """Trustee checked the delivered bytes itself, so its result decides, not the buyer's report.
+
+        Failed: release (refund), citing the contract clause that failed. Passed while the buyer rejects: the buyer's
+        complaint is not about anything the checks cover, so the funds stay held (uphold) for a person to decide."""
+        if self._verification is None:
+            return None
+        found = Verification.from_dict(self._verification)
+        if not found.passed:
+            return Ruling("release", found.failed_clause or "acceptance criteria", found.note(), objective=True)
+        reasoning = (
+            "Trustee checked the delivered file itself and every contract check passed; the buyer's rejection is "
+            "held for a person to review"
+        )
+        return Ruling("uphold", "acceptance criteria", reasoning, objective=False)
 
     def _contradicted_hash_claim(self, attest: Attest, contract: Contract) -> Ruling | None:
         """A buyer's "sha256 mismatch" that the signed record contradicts: the contract commits to a hash and the

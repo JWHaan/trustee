@@ -38,9 +38,11 @@ from ..state import Deal, DealState, IllegalTransition
 from ..store import Store, StoreConflict
 from ..summary import summarize
 from ..sweeper import DeadlineSweeper
+from ..verification import BlobError, BlobStore, DeliveryVerifier
 from .wire import (
     ID_PATTERN,
     agent_signing_bytes,
+    download_signing_bytes,
     funding_revoke_signing_bytes,
     funding_setup_signing_bytes,
     intent_revoke_signing_bytes,
@@ -79,8 +81,12 @@ class DealService:
         operator_token: str | None = None,
         signing_key: AgentKey | None = None,
         reputation: ReputationProvider | None = None,
+        blobs: BlobStore | None = None,
     ):
         self.store = store
+        # Delivered files the sellers hand to Trustee, and the checks Trustee runs on them itself.
+        self.blobs = blobs if blobs is not None else BlobStore()
+        self.delivery_verifier = DeliveryVerifier(self.blobs)
         self.paypal = paypal
         self.ledger = ledger
         self.llm = llm
@@ -171,6 +177,7 @@ class DealService:
     def _new_trustee(self, deal_id: str, snapshot: dict[str, Any] | None = None) -> Trustee:
         trustee = self._build_trustee(deal_id, snapshot)
         trustee.before_money = lambda contract: self._write_ahead(trustee, contract)
+        trustee.verifier = self.delivery_verifier.verify
         return trustee
 
     def _write_ahead(self, trustee: Trustee, contract: Contract) -> None:
@@ -626,6 +633,8 @@ class DealService:
         }
         if snap.get("settlement"):  # pro-rata settlement: what was captured and what went back to the buyer
             view["settlement"] = snap["settlement"]
+        if snap.get("verification"):  # Trustee's own check of the delivered file
+            view["verification"] = snap["verification"]
         # What happened, in plain words: the same summary the arena shows people.
         view["summary"] = summarize(
             state=snap["state"],
@@ -638,6 +647,7 @@ class DealService:
             dispute_deadline=snap["dispute_deadline"],
             human_present=view["authority"]["human_present"],
             authority_outcome=view["authority"]["outcome"],
+            verification=snap.get("verification"),
         )
         return view
 
@@ -710,6 +720,37 @@ class DealService:
             self._persist(trustee, contract)
             self._raise_for(decision, trustee, contract, "delivery")
             return self._view(trustee, contract)
+
+    # ------------------------------------------------------- the delivered file
+
+    def upload_deliverable(self, deal_id: str, data: bytes) -> dict[str, Any]:
+        """The seller hands Trustee the file before recording the delivery, so Trustee can check it itself.
+
+        No signature is needed: the file is stored under its own sha256, and Trustee only checks the bytes under the
+        hash the seller *signs* in the delivery. Uploading anything else changes nothing."""
+        trustee, _ = self._require(deal_id)
+        if trustee.deal.state not in (DealState.ESCROWED, DealState.DELIVERED):
+            raise ServiceError(409, f"files are accepted while funds are held; the deal is {trustee.deal.state.value}")
+        try:
+            digest = self.blobs.put(data, deal_id)
+        except BlobError as exc:
+            raise ServiceError(413 if "larger" in str(exc) else 422, str(exc)) from None
+        return {"deal_id": deal_id, "sha256": digest, "size": len(data)}
+
+    def download_deliverable(self, deal_id: str, signature: str | None) -> tuple[bytes, str]:
+        """The buyer gets the file from Trustee once the payment has settled: payment and file change hands together.
+
+        Signed by the buyer's agent key over `download_signing_bytes(deal_id)`."""
+        trustee, contract = self._require(deal_id)
+        if not self.registry.verify(contract.buyer, signature, download_signing_bytes(deal_id)):
+            raise ServiceError(401, "the download must be signed by the buyer's agent key")
+        if trustee.deal.state != DealState.SETTLED:
+            raise ServiceError(409, "the file is released to the buyer when the payment settles")
+        record = trustee.snapshot().get("verification") or {}
+        data = self.blobs.get(str(record.get("sha256_received") or "")) if record else None
+        if data is None:
+            raise ServiceError(404, "Trustee holds no file for this deal; the seller delivered it directly")
+        return data, contract.good.deliverable_ref
 
     def on_attest(self, deal_id: str, attest: Attest) -> dict[str, Any]:
         trustee, contract = self._require(deal_id)
