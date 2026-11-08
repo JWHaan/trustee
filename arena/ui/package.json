@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "5.3.0",
     "ag-grid-community": "32.3.9",
     "ag-grid-react": "32.3.9",
     "lucide-react": "0.460.0",

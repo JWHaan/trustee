@@ -126,6 +126,7 @@ class RunResult:
     human_present: bool | None = None  # False when the buyer's agent paid under its intent mandate, no human click
     settlement: dict[str, Any] | None = None  # pro-rata settlement: captured, released, units
     refusal: str | None = None  # why Trustee refused the deal before any money was held, in its own words
+    authority_outcome: str | None = None  # the intent check's verdict: autonomous | step_up | reject (None: no intent)
 
     def snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {
@@ -166,6 +167,7 @@ class RunResult:
             refusal=self.refusal,
             buyer_reason=attest.get("reason"),
             human_present=self.human_present,
+            authority_outcome=self.authority_outcome,
         )
         return snap
 
@@ -533,6 +535,7 @@ class DealRunner:
         )
         result.receipt, result.receipt_verified = receipt, report.ok
         result.human_present = bool(receipt["human_present"])
+        result.authority_outcome = (trustee.snapshot().get("autonomy") or {}).get("outcome")
         self.ledger.append(
             deal.deal_id,
             "trustee",

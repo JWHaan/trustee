@@ -1,66 +1,101 @@
-import { Check, FileSignature, ShieldCheck, UserCheck, X } from "lucide-react";
+import { useState } from "react";
+import { Check, X } from "lucide-react";
 import type { Row } from "./api";
-import { derivePolicy } from "./derive";
+import { deriveChecks, derivePolicy, type CheckItem } from "./derive";
 
 const LABEL: Record<string, string> = {
-  "signature.principal_intent": "Human signed the intent",
+  "signature.principal_intent": "Human signed the instruction",
   "signature.principal_agent": "Human vouches for this agent",
   "signature.agent_contract": "Agent signed this contract",
-  "intent.not_revoked": "Intent not revoked",
-  "intent.not_expired": "Intent not expired",
-  "intent.require_escrow": "Funds held until delivery is verified",
+  "intent.not_revoked": "Instruction not revoked",
+  "intent.not_expired": "Instruction not expired",
+  "intent.require_escrow": "Funds held until delivery is checked",
   "seller.allowed": "Seller is the one named",
   "item.match": "Item matches the instruction",
   "price.max_price": "Price within the limit",
   "budget.max_total": "Within the total budget",
   "velocity.window": "Not too many purchases",
-  "criteria.required": "Contract commits to the sha256",
+  "criteria.required": "Contract commits to the file's hash",
   "currency.match": "Currency matches",
-  "funding.active": "Funding source still active",
+  "funding.active": "Payment method still active",
 };
 
+function Line({ item }: { item: CheckItem }) {
+  return (
+    <li className={item.ok ? "ok" : "no"}>
+      {item.ok ? <Check size={14} strokeWidth={3} aria-hidden="true" /> : <X size={14} strokeWidth={3} aria-hidden="true" />}
+      <span className="rname">{item.label}</span>
+      <span className="rnote" title={item.detail}>
+        {item.detail}
+      </span>
+      <span className="sr-only">{item.ok ? "passed" : "failed"}</span>
+    </li>
+  );
+}
+
+export const ruleLabel = (rule: string) => LABEL[rule] ?? rule;
+
+/** How many checks failed, for the tab label; null before anything was checked. */
+export function failedChecks(rows: Row[]): { failed: number; total: number } | null {
+  const items = deriveChecks(rows, ruleLabel).flatMap((g) => g.items);
+  return items.length ? { failed: items.filter((i) => !i.ok).length, total: items.length } : null;
+}
+
 /**
- * The intent mandate's rules as a checklist: one line per rule the Trustee evaluated, read from the same
- * `policy` ledger rows the tape shows. Nothing here is decided in the browser.
+ * What Trustee checked, in three groups. Failures are always shown; passing checks in a group fold into one line
+ * until asked for.
  */
 export function PolicyChecklist({ rows }: { rows: Row[] }) {
-  const p = derivePolicy(rows);
-  if (!p.consent && !p.rules.length) return null;
-  const verdict =
-    p.authority === "intent"
-      ? { icon: <ShieldCheck size={15} aria-hidden="true" />, text: "Paid under the intent mandate — no human click", tone: "good" }
-      : p.authority === "stepup"
-        ? { icon: <UserCheck size={15} aria-hidden="true" />, text: "Outside the instruction — a human approves", tone: "warn" }
-        : p.decision?.result === "reject"
-          ? { icon: <X size={15} aria-hidden="true" />, text: "Refused by the intent mandate", tone: "bad" }
-          : { icon: <FileSignature size={15} aria-hidden="true" />, text: "Waiting for the contract", tone: "idle" };
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const groups = deriveChecks(rows, ruleLabel);
+  const consent = derivePolicy(rows).consent;
+  if (!groups.length) {
+    return <p className="checks-empty">Nothing has been checked yet. Run a deal to see each check.</p>;
+  }
   return (
-    <section className="policy" aria-label="intent mandate checks">
-      <div className="section-bar">
-        <span>Intent mandate</span>
-        <span className="meta">{p.rules.length ? `${p.passed}/${p.rules.length} rules pass` : "signed, not yet used"}</span>
-      </div>
-      {p.consent ? (
-        <p className="policy-consent">
-          <FileSignature size={14} aria-hidden="true" /> {p.consent.note}
-          {p.limits ? <em> {p.limits.note}</em> : null}
-        </p>
-      ) : null}
-      {p.rules.length ? (
-        <ul className="policy-list">
-          {p.rules.map((r) => (
-            <li key={r.id} className={r.result === "pass" ? "ok" : "no"} title={r.note}>
-              {r.result === "pass" ? <Check size={13} strokeWidth={3} aria-hidden="true" /> : <X size={13} strokeWidth={3} aria-hidden="true" />}
-              <span className="rname">{LABEL[r.rule] ?? r.rule}</span>
-              <span className="rnote">{r.note.replace(/^[^:]+: (pass|FAIL) /, "")}</span>
-              <span className="sr-only">{r.result === "pass" ? "passed" : "failed"}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className={`policy-verdict ${verdict.tone}`}>
-        {verdict.icon} {verdict.text}
-      </div>
-    </section>
+    <div className="checks">
+      {consent ? <p className="checks-consent">{consent.note}</p> : null}
+      {groups.map((g) => {
+        const failed = g.items.filter((i) => !i.ok);
+        const passed = g.items.filter((i) => i.ok);
+        const shown = open[g.title];
+        return (
+          <div key={g.title} className="checks-group">
+            <h3>{g.title}</h3>
+            {failed.length ? (
+              <ul className="check-list">
+                {failed.map((i) => (
+                  <Line key={i.id} item={i} />
+                ))}
+              </ul>
+            ) : null}
+            {passed.length === 1 && !failed.length ? (
+              <ul className="check-list">
+                <Line item={passed[0]} />
+              </ul>
+            ) : passed.length ? (
+              <>
+                <button
+                  type="button"
+                  className="linkish"
+                  aria-expanded={Boolean(shown)}
+                  onClick={() => setOpen((o) => ({ ...o, [g.title]: !o[g.title] }))}
+                >
+                  {failed.length ? `${passed.length} other checks passed` : `All ${passed.length} checks passed`}
+                  {shown ? " (hide)" : " (show)"}
+                </button>
+                {shown ? (
+                  <ul className="check-list">
+                    {passed.map((i) => (
+                      <Line key={i.id} item={i} />
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }

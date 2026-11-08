@@ -637,6 +637,7 @@ class DealService:
             needs_attention=snap.get("needs_attention"),
             dispute_deadline=snap["dispute_deadline"],
             human_present=view["authority"]["human_present"],
+            authority_outcome=view["authority"]["outcome"],
         )
         return view
 
