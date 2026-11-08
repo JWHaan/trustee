@@ -221,7 +221,6 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
           defaultColDef={defaultColDef}
           getRowId={(p) => p.data.id}
           animateRows={false}
-          suppressCellFocus
           suppressMovableColumns
           tooltipShowDelay={400}
           quickFilterText={search}

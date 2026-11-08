@@ -60,9 +60,12 @@ Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status 
 ```json
 {
   "status": "refunded",
-  "tone": "bad",
-  "headline": "Refunded: the buyer keeps 170.00 USD.",
-  "reasons": ["It failed the contract check \u201csha256 matches contract\u201d.", "sha256 does not match contract; ..."],
+  "tone": "neutral",
+  "headline": "Refunded: the buyer keeps $170.00.",
+  "reasons": [
+    "The delivery failed the contract: it isn't the file the contract names (its fingerprint is different).",
+    "Trustee checked the file itself, so this didn't rest on the buyer's word."
+  ],
   "next_step": null,
   "money": {"paid_to_seller": "0.00", "returned_to_buyer": "170.00", "held": "0.00"},
   "currency": "USD"

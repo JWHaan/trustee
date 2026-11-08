@@ -86,7 +86,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
   const steps: Step[] = [
     {
       key: "negotiate",
-      label: "Negotiate",
+      label: "Price agreed",
       status: moves > 0 || agreedOffPlatform || contract ? "done" : "todo",
       detail: moves > 0 ? `${moves} moves` : agreedOffPlatform || contract ? "agreed off-platform" : "",
     },
@@ -98,13 +98,13 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
     },
     {
       key: "identity",
-      label: "Identity verified",
+      label: "Signatures checked",
       status: forged ? "failed" : contractIds.filter((r) => r.check === "verified").length >= 2 ? "done" : "todo",
       detail: forged ? "forged signature" : verified ? `${verified} signatures` : "",
     },
     {
       key: "mandate",
-      label: "Mandates checked",
+      label: "Limits checked",
       status: mandate ? (mandateOk ? "done" : "failed") : "todo",
       detail: mandate
         ? mandateOk
@@ -141,7 +141,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
     },
     {
       key: "verified",
-      label: "Verified",
+      label: "File checked",
       status: attest ? (attestVerdict === "reject" ? "failed" : "done") : "todo",
       detail: attest
         ? attestVerdict === "reject"
