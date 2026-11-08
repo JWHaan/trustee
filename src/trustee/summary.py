@@ -49,6 +49,25 @@ def _clip(text: str | None) -> str | None:
     return line
 
 
+def _show(amount: str, currency: str) -> str:
+    """$156.00 for US dollars, 156.00 EUR otherwise: the same form the arena's money line uses."""
+    return f"${amount}" if currency == "USD" else f"{amount} {currency}"
+
+
+def _plain_failure(clause: str | None) -> str:
+    """What a failed acceptance criterion means, in words a person reads without knowing the contract format."""
+    text = (clause or "").lower()
+    if "sha256" in text or "hash" in text:
+        return "it isn't the file the contract names (its fingerprint is different)"
+    if "schema" in text or "column" in text:
+        return "its columns don't match what the contract specifies"
+    if "row" in text or "at least" in text:
+        return "rows are missing or have blank values"
+    if "market" in text:
+        return "its prices don't match live market prices"
+    return f"\u201c{clause}\u201d" if clause else "a contract check failed"
+
+
 def _money(paid: str = _ZERO, returned: str = _ZERO, held: str = _ZERO) -> dict[str, str]:
     return {"paid_to_seller": paid, "returned_to_buyer": returned, "held": held}
 
@@ -89,7 +108,8 @@ def summarize(
     # Stopped before any money was held.
     if outcome in ("rejected_identity", "rejected_mandate"):
         if outcome == "rejected_identity":
-            reasons.append(refusal or "A signature did not match the key registered for that agent.")
+            # The raw refusal names internal agent ids; the person needs what it means.
+            reasons.append("A signature on the contract doesn't match the key registered for that agent.")
         else:
             reasons.append(refusal or "The deal is outside what the buyer or seller is allowed to do.")
         reasons.append("PayPal was never called.")
@@ -115,7 +135,7 @@ def summarize(
             return done(
                 "partly_paid",
                 "warn",
-                f"Partly paid: the seller received {paid} {cur}, the buyer got {back} {cur} back.",
+                f"Partly paid: the seller received {_show(paid, cur)}, the buyer got {_show(back, cur)} back.",
                 _money(paid=paid, returned=back),
             )
         if ruling and ruling.get("decision") in ("uphold", "settle"):
@@ -128,24 +148,26 @@ def summarize(
             reasons.append("A person approved it, because it was outside the buyer's signed instruction.")
         elif human_present is False:
             reasons.append("Paid under the buyer's signed instruction, with no approval click.")
-        return done("paid", "good", f"Paid: the seller received {amount} {cur}.", _money(paid=amount))
+        return done("paid", "good", f"Paid: the seller received {_show(amount, cur)}.", _money(paid=amount))
 
     if state == "VOIDED":
         held_before = escrow_status in ("voided", "authorized") or bool(ruling)
         if ruling:
-            clause = ruling.get("clause")
-            if clause:
-                reasons.append(f"It failed the contract check \u201c{clause}\u201d.")
+            # Plain words here; the raw evidence (hashes, column lists) is in the deal's checks and ledger.
+            reasons.append(f"The delivery failed the contract: {_plain_failure(ruling.get('clause'))}.")
             if verification and not verification.get("passed"):
-                reasons.append("Trustee checked the file itself, not only the buyer's word.")
-            # The buyer's own words are the full evidence; the ruling's copy is shortened by the arbiter.
-            reasons.append(buyer_reason or ruling.get("reasoning") or "")
+                reasons.append("Trustee checked the file itself, so this didn't rest on the buyer's word.")
+            else:
+                reasons.append("The seller isn't paid for a delivery that fails the contract.")
         elif refusal:
             reasons.append(refusal)
         else:
             reasons.append("The deal ended before it could complete, so the hold was released.")
         if held_before:
-            return done("refunded", "bad", f"Refunded: the buyer keeps {amount} {cur}.", _money(returned=amount))
+            # Blue, not red: the money was protected, which is the system working.
+            return done(
+                "refunded", "neutral", f"Refunded: the buyer keeps {_show(amount, cur)}.", _money(returned=amount)
+            )
         return done("cancelled", "neutral", "Cancelled. Nothing was charged.", _money())
 
     if state == "DISPUTED":
@@ -154,7 +176,7 @@ def summarize(
         return done(
             "on_hold",
             "warn",
-            f"On hold: {amount} {cur} stays held until a person decides.",
+            f"On hold: {_show(amount, cur)} stays held until a person decides.",
             _money(held=amount),
             f"An operator releases the money to the buyer or pays the seller{when}. "
             "If nobody does, the seller is paid when the dispute window ends.",
