@@ -1235,9 +1235,11 @@ main {
 .pill:hover:not(:disabled) {
   border-color: #2c3546;
 }
+/* Selected deal: ink, not gold. Gold is kept for money on hold. */
 .pill.on {
-  border-color: var(--gold);
-  color: var(--gold);
+  border-color: var(--ink);
+  background: var(--panel-2);
+  color: var(--ink);
 }
 .pill:disabled {
   cursor: default;
@@ -1393,15 +1395,27 @@ main {
   background: var(--bg);
   margin-bottom: var(--s2);
 }
+.ml {
+  --dot: var(--muted);
+}
+.ml.money-paid {
+  --dot: var(--green);
+}
+.ml.money-returned {
+  --dot: var(--blue);
+}
+.ml.money-held {
+  --dot: var(--gold);
+}
 .ml-stop.here .ml-dot {
-  border-color: var(--tone);
-  background: var(--tone);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--tone) 18%, transparent);
+  border-color: var(--dot);
+  background: var(--dot);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--dot) 18%, transparent);
   animation: coin-land 420ms ease-out;
 }
 .ml.split .ml-stop.buyer .ml-dot {
-  border-color: var(--tone);
-  background: color-mix(in srgb, var(--tone) 45%, var(--bg));
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 45%, var(--bg));
 }
 .ml-name {
   font-weight: 500;
@@ -1671,4 +1685,34 @@ main {
 }
 .signer {
   font-size: 12px;
+}
+
+/* Long tokens (hashes, column lists) wrap instead of widening the page on a phone (WCAG 1.4.10 reflow). */
+.v-headline,
+.v-reasons li,
+.v-next,
+.picker-line,
+.checks-consent {
+  overflow-wrap: anywhere;
+}
+.page,
+.verdict-v2 {
+  min-width: 0;
+}
+
+/* Backstop for small screens whatever the pointer reports: 44px targets. */
+@media (max-width: 720px) {
+  .shell-v2 button,
+  .shell-v2 select {
+    min-height: 44px;
+  }
+}
+
+.v-ref {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+}
+.v-ref a {
+  color: var(--blue);
 }

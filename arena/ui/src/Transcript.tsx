@@ -175,7 +175,7 @@ export function Transcript({ rows, running, snap, footer }: Props) {
   }
 
   return (
-    <div className="feed" ref={feedRef} role="log" aria-live="polite" aria-label="negotiation and settlement">
+    <div className="feed" ref={feedRef} role="log" aria-label="Conversation" tabIndex={0}>
       {visible.map((row) => (
         <div key={row.id} className={`msgwrap ${row.id === lastId && running ? "last" : ""}`}>
           <Message row={row} snap={snap} />

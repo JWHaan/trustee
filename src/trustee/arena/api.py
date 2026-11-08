@@ -41,13 +41,15 @@ from ..elastic.config import arena_elastic_enabled
 from ..elastic.reputation import reputation_from_env
 from ..elastic.sink import ElasticSink
 from ..elastic.sink import sink_from_env as elastic_sink_from_env
+from ..evidence import build_evidence_pack
 from ..ledger import Ledger
 from ..network import create_northwind, create_tidewater, mount_agents
 from ..paypal import PayPalClient
 from ..platform import DealService, build_router
 from ..platform.reputation_routes import build_reputation_router
-from ..platform.service import operator_token_from_env
+from ..platform.service import ServiceError, operator_token_from_env
 from ..pricefeed import GOOD_ID as PRICEFEED_GOOD_ID
+from ..protocol import Contract
 from ..store import Store
 from .rows import to_row
 from .runner import MODES, DealRunner, RunResult
@@ -412,6 +414,28 @@ def create_app(
         if rec.result is None or rec.result.receipt is None:
             raise HTTPException(status_code=404, detail="this run has no settlement receipt (yet)")
         return rec.result.receipt
+
+    @app.get("/api/runs/{run_id}/evidence")
+    async def get_run_evidence(run_id: str) -> dict[str, Any]:
+        """The signed evidence pack for the run's deal: from the platform when the deal ran through /v1 or A2A,
+        else from the in-process run."""
+        rec = registry.require(run_id)
+        result = rec.result
+        if result is None or not result.deal_id:
+            raise HTTPException(status_code=404, detail="this run has no deal (yet)")
+        try:
+            return await asyncio.to_thread(service.evidence, result.deal_id)
+        except ServiceError:
+            pass
+        if result.signed_contract is None or result.trustee_snapshot is None:
+            raise HTTPException(status_code=404, detail="this run has no evidence (yet)")
+        return build_evidence_pack(
+            contract=Contract.model_validate(result.signed_contract),
+            snapshot=result.trustee_snapshot,
+            events=runner.ledger.tail(result.deal_id),
+            receipt=result.receipt,
+            key=runner.signing_key,
+        )
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str) -> StreamingResponse:

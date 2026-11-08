@@ -15,18 +15,26 @@ from trustee.summary import summarize
 def test_paid():
     s = summarize(state="SETTLED", price="156", buyer_reason="all acceptance criteria met", human_present=False)
     assert s["status"] == "paid" and s["tone"] == "good"
-    assert s["headline"] == "Paid: the seller received 156.00 USD."
+    assert s["headline"] == "Paid: the seller received $156.00."
     assert s["reasons"][0] == "All acceptance criteria met"
     assert s["next_step"] is None
     assert s["money"] == {"paid_to_seller": "156.00", "returned_to_buyer": "0.00", "held": "0.00"}
 
 
-def test_refunded_names_the_failed_clause_and_drops_internal_labels():
+def test_refunded_says_what_failed_in_plain_words():
     ruling = {"decision": "release", "clause": "sha256 matches contract", "reasoning": "objective breach: hash differs"}
-    s = summarize(state="VOIDED", price="170", escrow_status="voided", ruling=ruling)
-    assert s["status"] == "refunded" and s["headline"] == "Refunded: the buyer keeps 170.00 USD."
-    assert s["reasons"] == ["It failed the contract check “sha256 matches contract”.", "Hash differs"]
+    s = summarize(state="VOIDED", price="170", escrow_status="voided", ruling=ruling, verification={"passed": False})
+    assert s["status"] == "refunded" and s["tone"] == "neutral"  # money protected: blue, not red
+    assert s["headline"] == "Refunded: the buyer keeps $170.00."
+    assert s["reasons"] == [
+        "The delivery failed the contract: it isn't the file the contract names (its fingerprint is different).",
+        "Trustee checked the file itself, so this didn't rest on the buyer's word.",
+    ]
     assert s["money"]["returned_to_buyer"] == "170.00"
+
+
+def test_non_dollar_amounts_keep_their_currency():
+    assert summarize(state="SETTLED", price="9.5", currency="EUR")["headline"] == "Paid: the seller received 9.50 EUR."
 
 
 def test_partly_paid():
@@ -38,9 +46,18 @@ def test_partly_paid():
 
 
 def test_refused_before_payment_moves_nothing():
-    s = summarize(state="NEGOTIATING", price="156", outcome="rejected_identity", refusal="signature does not verify")
+    s = summarize(
+        state="NEGOTIATING",
+        price="156",
+        outcome="rejected_identity",
+        refusal="seller seller-agent-1: missing or invalid contract signature",
+    )
     assert s["status"] == "refused" and "No money moved" in s["headline"]
-    assert s["reasons"] == ["Signature does not verify", "PayPal was never called."]
+    assert s["reasons"] == [
+        "A signature on the contract doesn't match the key registered for that agent.",
+        "PayPal was never called.",
+    ]
+    assert "seller-agent-1" not in " ".join(s["reasons"])  # no internal ids in what a person reads
     assert summarize(state="VOIDED", price="1", escrow_status="voided", refusal="sha256 differs")["reasons"] == [
         "sha256 differs"
     ]
