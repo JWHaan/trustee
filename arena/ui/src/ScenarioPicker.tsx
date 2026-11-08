@@ -1,65 +1,44 @@
 import { Gavel, Handshake, KeyRound, Loader, Network, Server, UserCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Mode, ScenarioInfo } from "./api";
-import { money } from "./describe";
 
-interface Meta {
-  icon: ReactNode;
-  blurb: string;
-  outcome: string;
-  tone: "good" | "refund" | "bad";
-  who: string;
-}
-
-const META: Record<string, Meta> = {
+const SHORT: Record<string, { label: string; icon: ReactNode; line: string }> = {
   honest: {
-    icon: <Handshake size={18} aria-hidden="true" />,
-    blurb: "Ships the dataset Northwind paid for; the check passes.",
-    outcome: "Settles",
-    tone: "good",
-    who: "Northwind + Tidewater",
+    label: "Honest seller",
+    icon: <Handshake size={16} aria-hidden="true" />,
+    line: "Tidewater ships the dataset Northwind paid for.",
   },
   cheat: {
-    icon: <Gavel size={18} aria-hidden="true" />,
-    blurb: "Ships junk under the right file name; the hash fails.",
-    outcome: "Refunds",
-    tone: "refund",
-    who: "Northwind + Tidewater + arbiter",
+    label: "Cheating seller",
+    icon: <Gavel size={16} aria-hidden="true" />,
+    line: "Tidewater ships a junk file under the right name.",
   },
   forged: {
-    icon: <KeyRound size={18} aria-hidden="true" />,
-    blurb: "An impostor signs as Tidewater; the signature is refused.",
-    outcome: "Rejected before PayPal",
-    tone: "bad",
-    who: "Northwind + impostor",
-  },
-  outside: {
-    icon: <Server size={18} aria-hidden="true" />,
-    blurb: "Two outside agents settle through the public /v1 API.",
-    outcome: "Settles via API",
-    tone: "good",
-    who: "External agents over HTTP",
+    label: "Impostor",
+    icon: <KeyRound size={16} aria-hidden="true" />,
+    line: "Someone signs the contract as Tidewater with a key nobody registered.",
   },
   overreach: {
-    icon: <UserCheck size={18} aria-hidden="true" />,
-    blurb: "The seller will not go below $190 but the human said $175 at most; the agent cannot pay alone.",
-    outcome: "Steps up to a human",
-    tone: "refund",
-    who: "Northwind + Tidewater + human approval",
+    label: "Over the limit",
+    icon: <UserCheck size={16} aria-hidden="true" />,
+    line: "The seller wants $190; the human told the agent $175 at most.",
+  },
+  outside: {
+    label: "Outside agents",
+    icon: <Server size={16} aria-hidden="true" />,
+    line: "Two agents on their own servers settle through the public API.",
   },
   a2a: {
-    icon: <Network size={18} aria-hidden="true" />,
-    blurb: "Northwind and Tidewater are A2A agents that find each other by Agent Card; Trustee holds the money.",
-    outcome: "Settles over A2A",
-    tone: "good",
-    who: "Northwind + Tidewater + Trustee over A2A",
+    label: "Agent to agent",
+    icon: <Network size={16} aria-hidden="true" />,
+    line: "Northwind and Tidewater find each other and trade over A2A.",
   },
 };
 
 const MODE_LABEL: Record<Mode, string> = {
-  auto: "Auto (live, else scripted)",
-  live: "Live model only",
-  scripted: "Scripted replay",
+  auto: "Model: live, else replay",
+  live: "Model: live only",
+  scripted: "Model: replay",
 };
 
 interface Props {
@@ -73,15 +52,45 @@ interface Props {
 }
 
 export function ScenarioPicker({ scenarios, current, running, warming, mode, onMode, onRun }: Props) {
+  const selected = scenarios.find((s) => s.name === current);
   return (
-    <section className="picker" aria-label="scenarios">
-      <div className="picker-head">
-        <p>
-          <b>Demo:</b> Northwind Outfitters&apos; planning agent buys a Q3 returns dataset from Tidewater Data
-          Co.&apos;s sales agent. Choose a seller and watch where the money goes.
-        </p>
+    <section className="picker-v2" aria-label="choose a deal">
+      <div className="picker-row">
+        <span className="picker-label" id="picker-label">
+          Try a deal
+        </span>
+        {scenarios.length === 0 ? (
+          <span className="picker-wait" role="status" aria-busy="true">
+            <Loader size={14} className="spin" aria-hidden="true" />
+            {warming ? "Waking the demo server. A cold start can take up to a minute." : "Loading deals"}
+          </span>
+        ) : (
+          <div className="pills" role="group" aria-labelledby="picker-label">
+            {scenarios.map((s) => {
+              const meta = SHORT[s.name];
+              const on = current === s.name;
+              return (
+                <button
+                  key={s.name}
+                  type="button"
+                  className={`pill ${on ? "on" : ""}`}
+                  aria-pressed={on}
+                  onClick={() => onRun(s.name)}
+                  disabled={running}
+                  title={s.blurb}
+                >
+                  {meta?.icon}
+                  {meta?.label ?? s.title}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div className="picker-sub">
+        <p className="picker-line">{selected ? SHORT[selected.name]?.line ?? selected.blurb : ""}</p>
         <label className="modesel">
-          <span>Model</span>
+          <span className="sr-only">Negotiation model</span>
           <select value={mode} onChange={(e) => onMode(e.target.value as Mode)} disabled={running}>
             {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
               <option key={m} value={m}>
@@ -91,54 +100,6 @@ export function ScenarioPicker({ scenarios, current, running, warming, mode, onM
           </select>
         </label>
       </div>
-
-      {scenarios.length === 0 ? (
-        <div className="cards" aria-busy="true">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="card skeleton" aria-hidden="true">
-              <span className="sk w40" />
-              <span className="sk w90" />
-              <span className="sk w60" />
-            </div>
-          ))}
-          {warming ? (
-            <p className="warming" role="status">
-              <Loader size={13} className="spin" aria-hidden="true" /> Waking the demo server. A cold start can take
-              up to a minute.
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <div className="cards">
-          {scenarios.map((s) => {
-            const meta = META[s.name];
-            const selected = current === s.name;
-            const busy = selected && running;
-            return (
-              <button
-                key={s.name}
-                type="button"
-                className={`card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
-                aria-pressed={selected}
-                onClick={() => onRun(s.name)}
-                disabled={running}
-                title={s.blurb}
-              >
-                <span className="card-top">
-                  <span className={`card-icon ${meta?.tone ?? "good"}`}>{meta?.icon}</span>
-                  <span className="card-title">{s.title}</span>
-                  <span className={`outcome ${meta?.tone ?? "good"}`}>{busy ? "running…" : meta?.outcome}</span>
-                </span>
-                <span className="card-blurb">{meta?.blurb ?? s.blurb}</span>
-                <span className="card-foot">
-                  <span>{meta?.who}</span>
-                  <span className="terms">ask {money(s.ask)}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
     </section>
   );
 }

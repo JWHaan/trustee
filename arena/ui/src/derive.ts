@@ -222,3 +222,78 @@ export function side(actor: string): "buyer" | "seller" | "system" {
   if (actor.startsWith("seller") || actor.startsWith("tidewater")) return "seller";
   return "system";
 }
+
+export interface CheckItem {
+  id: string;
+  ok: boolean;
+  label: string;
+  detail: string;
+}
+
+export interface CheckGroup {
+  title: string;
+  items: CheckItem[];
+}
+
+/** A person-readable name for an agent id: the company, not the key name. */
+function who(agent: string): string {
+  const s = side(agent);
+  return s === "buyer" ? "Northwind" : s === "seller" ? "Tidewater" : agent || "A party";
+}
+
+const SIGNED_BY: Record<string, string> = {
+  verify_contract: "contract",
+  verify_delivery: "delivery",
+  verify_attest: "delivery check",
+};
+
+/**
+ * Everything Trustee checked for this deal, grouped the way a person asks about it: was it really them (signatures),
+ * were they allowed (spending rules), and was the delivery what was promised. Read from the ledger rows only.
+ */
+export function deriveChecks(rows: Row[], ruleLabel: (rule: string) => string): CheckGroup[] {
+  const groups: CheckGroup[] = [];
+
+  const sigs = rows.filter((r) => r.kind === "identity" && r.check);
+  if (sigs.length) {
+    groups.push({
+      title: "Signatures",
+      items: sigs.map((r) => ({
+        id: r.id,
+        ok: r.check === "verified",
+        label: `${who(r.signer)}'s signature on the ${SIGNED_BY[r.event] ?? r.event.replace(/^verify_/, "")}`,
+        detail: r.check === "verified" ? "matches the registered key" : r.note || "does not match the registered key",
+      })),
+    });
+  }
+
+  const policy = derivePolicy(rows);
+  const mandates = rows.filter((r) => r.kind === "mandate" && r.note);
+  const spending: CheckItem[] = policy.rules.map((r) => ({
+    id: r.id,
+    ok: r.result === "pass",
+    label: ruleLabel(r.rule),
+    detail: r.note.replace(/^[^:]+: (pass|FAIL) /, ""),
+  }));
+  for (const r of mandates) {
+    const ok = r.note.startsWith("mandates OK");
+    spending.unshift({
+      id: r.id,
+      ok,
+      label: "Both sides within their spending limits",
+      detail: ok ? r.note.replace(/^mandates OK;?\s*/, "") : r.note,
+    });
+  }
+  if (spending.length) groups.push({ title: "Spending rules", items: spending });
+
+  const verdicts = rows.filter((r) => r.kind === "msg" && r.event === "attestation");
+  if (verdicts.length) {
+    const last = verdicts[verdicts.length - 1];
+    const ok = last.verdict.toLowerCase() !== "reject";
+    groups.push({
+      title: "Delivery",
+      items: [{ id: last.id, ok, label: ok ? "The file matches the contract" : "The file does not match the contract", detail: last.note }],
+    });
+  }
+  return groups;
+}

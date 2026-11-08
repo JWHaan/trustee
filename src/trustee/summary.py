@@ -41,7 +41,12 @@ def _clip(text: str | None) -> str | None:
             line = line[len(prefix) :]
     if len(line) > MAX_REASON:
         line = line[:MAX_REASON].rsplit(" ", 1)[0].rstrip(",;:") + "…"
-    return line[0].upper() + line[1:] if line else None
+    if not line:
+        return None
+    first = line.split(" ", 1)[0]
+    if first.isalpha():  # leave identifiers such as sha256 or order_id as written
+        line = line[0].upper() + line[1:]
+    return line
 
 
 def _money(paid: str = _ZERO, returned: str = _ZERO, held: str = _ZERO) -> dict[str, str]:
@@ -62,6 +67,7 @@ def summarize(
     buyer_reason: str | None = None,
     dispute_deadline: str | None = None,
     human_present: bool | None = None,
+    authority_outcome: str | None = None,
 ) -> dict[str, Any]:
     amount = _amount(price)
     cur = currency or "USD"
@@ -113,7 +119,9 @@ def summarize(
             reasons.append(str(ruling.get("reasoning") or "The dispute was decided for the seller."))
         else:
             reasons.append(buyer_reason or "The delivery passed every check in the contract.")
-        if human_present is False:
+        if authority_outcome == "step_up":
+            reasons.append("A person approved it, because it was outside the buyer's signed instruction.")
+        elif human_present is False:
             reasons.append("Paid under the buyer's signed instruction, with no approval click.")
         return done("paid", "good", f"Paid: the seller received {amount} {cur}.", _money(paid=amount))
 
@@ -123,7 +131,8 @@ def summarize(
             clause = ruling.get("clause")
             if clause:
                 reasons.append(f"It failed the contract check \u201c{clause}\u201d.")
-            reasons.append(ruling.get("reasoning") or buyer_reason or "")
+            # The buyer's own words are the full evidence; the ruling's copy is shortened by the arbiter.
+            reasons.append(buyer_reason or ruling.get("reasoning") or "")
         elif refusal:
             reasons.append(refusal)
         else:

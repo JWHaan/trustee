@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, ChevronDown, Github, IdCard, ShieldCheck } from "lucide-react";
-import type { Health, Row, Snapshot } from "./api";
+import type { Health } from "./api";
 
 const REPO = "https://github.com/JWHaan/trustee";
 
@@ -15,19 +15,9 @@ const HOW: [string, string][] = [
 
 interface Props {
   health: Health | null;
-  snap: Snapshot | null;
-  rows: Row[];
-  running: boolean;
 }
 
-function chipTone(snap: Snapshot | null): { text: string; cls: string } | null {
-  if (snap?.fallback_from === "live") return { text: "model: live failed, scripted", cls: "warn" };
-  if (snap?.effective_mode === "live") return { text: "model: live", cls: "ok" };
-  if (snap?.effective_mode === "scripted") return { text: "model: scripted replay", cls: "info" };
-  return null;
-}
-
-export function Header({ health, snap, rows, running }: Props) {
+export function Header({ health }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -45,17 +35,6 @@ export function Header({ health, snap, rows, running }: Props) {
     };
   }, [open]);
 
-  const ids = rows.filter((r) => r.kind === "identity");
-  const bad = ids.filter((r) => r.check === "rejected").length;
-  const ok = ids.filter((r) => r.check === "verified").length;
-  const sig = bad
-    ? { text: "signature forged: rejected", cls: "bad" }
-    : ok
-      ? { text: `${ok} signatures verified`, cls: "ok" }
-      : { text: "signatures: none yet", cls: "idle" };
-  const model = chipTone(snap);
-  const status = running ? "running" : snap?.outcome ?? snap?.state ?? "idle";
-
   return (
     <header className="top">
       <div className="brand">
@@ -64,23 +43,16 @@ export function Header({ health, snap, rows, running }: Props) {
         </span>
         <div>
           <h1>Trustee</h1>
-          <p>Escrow and trust for payments between AI agents, on PayPal</p>
+          <p>Holds the payment until the delivery matches the deal</p>
         </div>
       </div>
 
       <div className="top-right">
-        <div className="chips-row" aria-label="run status">
-          {health ? (
-            <span className={`tag ${health.paypal === "sandbox" ? "gold" : "info"}`}>
-              {health.paypal === "sandbox" ? "PayPal sandbox" : "PayPal dry-run"}
-            </span>
-          ) : (
-            <span className="tag idle">PayPal: checking</span>
-          )}
-          {model ? <span className={`tag ${model.cls}`}>{model.text}</span> : null}
-          <span className={`tag ${sig.cls}`}>{sig.text}</span>
-          <span className={`tag status ${running ? "run" : "idle"}`}>{status}</span>
-        </div>
+        {health ? (
+          <span className={`env-pill ${health.paypal === "sandbox" ? "sandbox" : ""}`}>
+            {health.paypal === "sandbox" ? "PayPal sandbox: test money" : "Dry run: no PayPal calls"}
+          </span>
+        ) : null}
 
         <nav className="links" aria-label="project links">
           <a href={REPO} target="_blank" rel="noopener noreferrer">

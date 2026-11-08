@@ -51,6 +51,26 @@ Why this matters for PayPal, and how it would scale from this demo to a PayPal p
 [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
 verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
 
+## What a deal reports
+
+Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status (data part) and in each arena run.
+
+```json
+{
+  "status": "refunded",
+  "tone": "bad",
+  "headline": "Refunded: the buyer keeps 170.00 USD.",
+  "reasons": ["It failed the contract check \u201csha256 matches contract\u201d.", "sha256 does not match contract; ..."],
+  "next_step": null,
+  "money": {"paid_to_seller": "0.00", "returned_to_buyer": "170.00", "held": "0.00"},
+  "currency": "USD"
+}
+```
+
+`status` is one of `paid`, `partly_paid`, `refunded`, `cancelled`, `refused`, `on_hold`, `awaiting_approval`,
+`in_progress`; agents branch on it, people read the headline. It describes decisions already made and never makes one
+(`src/trustee/summary.py`).
+
 ## Run it
 
 ```bash
@@ -109,9 +129,16 @@ runnable by name and appear in the UI only when their flag is set:
 | `pricefeed-stale` | The hash matches, but the prices are months old; the market check fails and the escrow is voided. | `VOIDED` |
 | `pricefeed-mixed` | 8 of 40 rows are wrong; pro-rata capture of the sampled rows that checked out. | `SETTLED` (partial) |
 
-The grid has `signer` and `check` columns (`verified` / `rejected`) for every signature the Trustee checks,
-kind filter chips and a search box. A forged signature turns its row red. The strip shows a `signatures` chip and
-whether PayPal is `sandbox` or `dry-run`.
+**The page.** One answer leads: what happened to the money and why, in the words of the deal's `summary` (the same
+text agents get from `GET /v1/deals/{id}` and the A2A task status). Under it, a line shows where the money is
+(buyer, PayPal hold, seller) and a step-by-step progress bar. Everything else is one click away under
+**See how it happened**:
+
+- **Conversation:** what the agents said and did.
+- **Checks:** signatures, spending rules and the delivery, failures first.
+- **Ledger:** the raw tape in AG Grid, with `signer` and `check` columns, kind filters and search.
+
+The header says whether PayPal is in the sandbox or a dry run.
 
 `outside` calls the arena's own `/v1` over a real socket: `http://127.0.0.1:$PORT` by default (`PORT`, default
 8000), or `ARENA_SELF_URL` if the server is reachable under another address. It sends `TRUSTEE_OPERATOR_TOKEN`
@@ -350,6 +377,7 @@ src/trustee/
   intent.py          intent mandates (human-not-present): signed instruction + limits, the rule engine, drafting
   funding.py         vaulted PayPal funding sources behind opaque funding_refs
   receipts.py        signed settlement receipts and the Trustee signing key
+  summary.py         the plain-language verdict every deal reports (status, headline, reasons, next step, money)
   verify.py          `python -m trustee.verify`: check a receipt offline
   sandbox_approver.py  approve a PayPal sandbox order in a browser (local Chromium or remote over CDP)
   state.py           deal state machine (guarded, idempotent, transition hook)
@@ -418,13 +446,12 @@ tests/               650+ tests: agents, runner, API, SSE, PayPal request shapes
    contracted file name: a renamed column, 312 rows, reused order ids. The sha256
    fails, the arbiter cites "sha256 matches contract", escrow voids. Northwind keeps
    its money. *That* is why the trust layer exists.
-3. **Forged run** (20 s) — "Impostor seller". Someone signs as Tidewater with a key
-   nobody registered. Point at the red `SIGNATURE REJECTED` row and the
-   `signatures: forged — rejected` chip: the Trustee refuses before any money moves,
-   and the tape has no PayPal rows.
+3. **Impostor** (20 s) — someone signs as Tidewater with a key nobody registered. The
+   page says "Stopped before payment. No money moved." and the Checks tab shows the one
+   failed signature: the Trustee refuses before PayPal is called.
 4. **Outside agents** (30 s) — two agents that live on their own servers register,
-   sign mandates and a contract and settle through `/v1`. Filter the grid to `api` to
-   see each HTTP call, then to `identity` to see the four verified signatures.
+   sign mandates and a contract and settle through `/v1`. In the Ledger tab, filter to
+   `api` to see each HTTP call, then to `identity` to see the four verified signatures.
 
 With sandbox credentials, run the honest scenario once more live for the real-money-path
 step: the page shows "waiting for buyer approval" and the **Approve in PayPal sandbox**

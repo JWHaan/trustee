@@ -41,6 +41,9 @@ def test_refused_before_payment_moves_nothing():
     s = summarize(state="NEGOTIATING", price="156", outcome="rejected_identity", refusal="signature does not verify")
     assert s["status"] == "refused" and "No money moved" in s["headline"]
     assert s["reasons"] == ["Signature does not verify", "PayPal was never called."]
+    assert summarize(state="VOIDED", price="1", escrow_status="voided", refusal="sha256 differs")["reasons"] == [
+        "sha256 differs"
+    ]
     assert set(s["money"].values()) == {"0.00"}
 
 
@@ -106,3 +109,10 @@ def test_a2a_task_status_carries_the_summary():
     data = next(p for p in task.status.message.parts if getattr(p, "data", None) is not None).data
     assert data["summary"]["status"] == "in_progress"
     assert data["summary"]["headline"].startswith("Funds held")
+
+
+def test_a_stepped_up_payment_says_a_person_approved_it():
+    runner = DealRunner(ledger=Ledger(), paypal=PayPalClient(dry_run=True))
+    summary = runner.run(get_scenario("overreach"), mode="scripted").snapshot()["summary"]
+    assert summary["status"] == "paid"
+    assert any("A person approved it" in r for r in summary["reasons"])

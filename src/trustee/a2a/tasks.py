@@ -190,6 +190,7 @@ def _summary(snapshot: dict[str, Any], contract: dict[str, Any]) -> dict[str, An
         needs_attention=snapshot.get("needs_attention"),
         dispute_deadline=snapshot.get("dispute_deadline"),
         human_present=authority.get("human_present") if authority else None,
+        authority_outcome=authority.get("outcome") if authority else None,
     )
 
 
