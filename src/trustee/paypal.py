@@ -208,8 +208,12 @@ class PayPalClient:
         memo: str,
         request_id: str | None = None,
         vault_id: str | None = None,
+        custom_id: str | None = None,
     ) -> EscrowOrder:
         """Create the order and authorize it: funds are HELD, not moved.
+
+        `custom_id` (at most 127 characters) is stored on the order by PayPal and shown with it, so a PayPal order can
+        be traced to the Trustee contract it pays for; Trustee sets it to `trustee:<contract sha256>`.
 
         With `vault_id` (a PayPal Vault payment token the payer consented to once, see `create_setup_token`) the order
         is created with `payment_source.paypal.vault_id`, carries no `experience_context`, and is authorized with no
@@ -238,6 +242,7 @@ class PayPalClient:
                     "amount": {"currency_code": currency, "value": str(amount)},
                     "payee": {"email_address": seller_email},
                     "description": memo,
+                    **({"custom_id": custom_id[:127]} if custom_id else {}),
                 }
             ],
         }
@@ -266,7 +271,10 @@ class PayPalClient:
                 authorization_id=f"dry-authz-{uuid.uuid4().hex[:12]}",
                 status="authorized",
                 approve_url=None,
-                details={"funding": "vault"} if vault_id else {},
+                details={
+                    **({"funding": "vault"} if vault_id else {}),
+                    **({"custom_id": custom_id} if custom_id else {}),
+                },
             )
 
         resp = self._request_with_retry("POST", f"{self.base_url}/v2/checkout/orders", body, request_id=request_id)
