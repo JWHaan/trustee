@@ -36,6 +36,7 @@ from ..receipts import build_receipt, load_signing_key
 from ..reputation import LocalReputation, ReputationProvider
 from ..state import Deal, DealState, IllegalTransition
 from ..store import Store, StoreConflict
+from ..summary import summarize
 from ..sweeper import DeadlineSweeper
 from .wire import (
     ID_PATTERN,
@@ -625,6 +626,18 @@ class DealService:
         }
         if snap.get("settlement"):  # pro-rata settlement: what was captured and what went back to the buyer
             view["settlement"] = snap["settlement"]
+        # What happened, in plain words: the same summary the arena shows people.
+        view["summary"] = summarize(
+            state=snap["state"],
+            price=contract.price,
+            currency=contract.currency,
+            escrow_status=escrow["status"] if escrow else None,
+            ruling=view["ruling"],
+            settlement=snap.get("settlement"),
+            needs_attention=snap.get("needs_attention"),
+            dispute_deadline=snap["dispute_deadline"],
+            human_present=view["authority"]["human_present"],
+        )
         return view
 
     def events(self, deal_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
