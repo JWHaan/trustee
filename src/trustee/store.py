@@ -17,6 +17,7 @@ import json
 import logging
 import sqlite3
 import threading
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -154,6 +155,9 @@ class Store:
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
         self._lock = threading.RLock()
+        # Ledger events that could not be written yet, oldest first. They are retried, in order, before any newer
+        # event; `flush_backlog` raises while any remain, which is how the money path fails closed.
+        self._backlog: deque[Any] = deque()
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
@@ -412,17 +416,40 @@ class Store:
     def attach(self, ledger: Ledger) -> Callable[[], None]:
         """Persist every event the ledger emits. Returns the unsubscribe callable.
 
-        A storage failure is logged and swallowed here. The money path appends to the ledger
-        and must not stall or raise because the disk is full or the store is closed.
+        A storage failure does not raise into the ledger: the event joins an ordered backlog and is retried before the
+        next one, so nothing is dropped and each deal's hash chain lands in order. Before money moves, the platform
+        calls `flush_backlog`, which raises while the backlog cannot be written: no PayPal call is made on top of
+        events that are not durable.
         """
 
         def _persist(ev: Event) -> None:
-            try:
-                self.append_event(ev.ts, ev.deal_id, ev.actor, ev.kind, ev.payload, ev.prev_hash, ev.hash)
-            except Exception:  # noqa: BLE001 - storage must never break the ledger
-                log.exception("store: failed to persist ledger event %s; continuing", ev.kind)
+            with self._lock:
+                self._backlog.append(ev)
+                try:
+                    self._drain()
+                except Exception:  # noqa: BLE001 - storage must never break the ledger
+                    log.exception("store: failed to persist ledger event; %d waiting, will retry", len(self._backlog))
 
         return ledger.subscribe(_persist)
+
+    def _drain(self) -> None:
+        while self._backlog:
+            ev = self._backlog[0]
+            self.append_event(ev.ts, ev.deal_id, ev.actor, ev.kind, ev.payload, ev.prev_hash, ev.hash)
+            self._backlog.popleft()
+
+    def flush_backlog(self) -> None:
+        """Write every waiting ledger event, oldest first. Raises StoreError while any cannot be written."""
+        with self._lock:
+            try:
+                self._drain()
+            except Exception as exc:
+                raise StoreError(f"{len(self._backlog)} ledger event(s) not persisted: {exc}") from exc
+
+    @property
+    def backlog_size(self) -> int:
+        with self._lock:
+            return len(self._backlog)
 
     # -- push notification configs (A2A) -----------------------------------------
 

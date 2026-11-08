@@ -320,6 +320,9 @@ class OutsideFlow:
             ledger=self.ledger,
         )
         delivery = seller.deliver(contract, cheat=sc.cheat).sign(k_seller)
+        sent = self.store.received(contract.good.deliverable_ref)
+        if sent.is_file():  # hand Trustee the same bytes, so it can check them itself
+            self._as(self.seller_id, "file handed to Trustee").upload_deliverable(self.deal_id, sent.read_bytes())
         self._as(self.seller_id, "signed delivery accepted").deliver(delivery)
 
         buyer = BuyerAgent(

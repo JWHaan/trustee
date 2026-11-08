@@ -1,5 +1,7 @@
 # Trustee
 
+[![ci](https://github.com/JWHaan/trustee/actions/workflows/ci.yml/badge.svg)](https://github.com/JWHaan/trustee/actions/workflows/ci.yml)
+
 An escrow + arbitration agent for agent-to-agent commerce — PayPal AI Hackathon entry.
 
 In an agent-to-agent world, two agents can negotiate anything and enforce nothing.
@@ -47,19 +49,41 @@ no-ops — funds can never double-settle or strand.
 |---|---|
 | ![honest run](docs/arena-honest.png) | ![cheat run](docs/arena-cheat.png) |
 
-> These two screenshots predate the arena redesign (scenario cards, deal timeline, money panel, chat-style
-> transcript, restyled ledger tape). They are kept as-is and need re-shooting.
+Why this matters for PayPal, and how it would scale from this demo to a PayPal product:
+[docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
+verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
+
+## What a deal reports
+
+Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status (data part) and in each arena run.
+
+```json
+{
+  "status": "refunded",
+  "tone": "bad",
+  "headline": "Refunded: the buyer keeps 170.00 USD.",
+  "reasons": ["It failed the contract check \u201csha256 matches contract\u201d.", "sha256 does not match contract; ..."],
+  "next_step": null,
+  "money": {"paid_to_seller": "0.00", "returned_to_buyer": "170.00", "held": "0.00"},
+  "currency": "USD"
+}
+```
+
+`status` is one of `paid`, `partly_paid`, `refunded`, `cancelled`, `refused`, `on_hold`, `awaiting_approval`,
+`in_progress`; agents branch on it, people read the headline. It describes decisions already made and never makes one
+(`src/trustee/summary.py`).
 
 ## Run it
 
 ```bash
 uv sync --extra dev
-uv run pytest                       # 259 tests, dry-run: no credentials needed
+uv run pytest                       # 650+ tests, dry-run: no credentials needed
 
 # the judge's no-UI path — full ledger to stdout, exits non-zero if the deal
 # doesn't reach the expected terminal state
 uv run python -m trustee.arena.fixtures.run_honest
 uv run python -m trustee.arena.fixtures.run_cheat
+uv run python -m trustee.arena.fixtures.run_honest partial   # or overreach, pricefeed, pricefeed-stale, pricefeed-mixed
 
 # the arena
 cd arena/ui && npm install && npm run build && cd ../..
@@ -79,10 +103,11 @@ mode selector. No account, no login, no setup.
 |---|---|
 | `POST /api/runs` `{scenario, mode}` | start a run, returns `{run_id}` |
 | `GET /api/runs/{id}` | state snapshot: deal state, contract, escrow, ruling |
+| `GET /api/runs/{id}/receipt` | the run's signed settlement receipt |
 | `GET /api/runs/{id}/events` | SSE: one `msg` per ledger row, then `done` |
 | `GET /api/ledger?limit=500` | flat rows for the grid |
-| `GET /api/scenarios` | fixture-driven scenario list |
-| `GET /healthz` | liveness + whether PayPal is dry-run |
+| `GET /api/scenarios` | fixture-driven scenario list (the ones the UI shows) |
+| `GET /healthz` | liveness, whether PayPal is dry-run, and `durability` (ledger events and deal states not yet on disk; both should be 0) |
 
 SSE is replay-first: a subscriber is pre-filled with everything the run has
 already emitted, then fed live, so refreshing mid-run shows the same tape in
@@ -90,7 +115,8 @@ the same order. Runs execute on a worker thread (`asyncio.to_thread`) because
 the agents are synchronous; ledger callbacks are marshalled back onto the event
 loop with `call_soon_threadsafe`.
 
-**Scenarios.** Four, all in `fixtures/scenarios.json`:
+**Scenarios.** Ten, all in `fixtures/scenarios.json`. The UI lists the first six; the other four are always
+runnable by name and appear in the UI only when their flag is set:
 
 | Scenario | What it proves | Ends |
 |---|---|---|
@@ -98,10 +124,23 @@ loop with `call_soon_threadsafe`.
 | `cheat` | A junk delivery fails the hash and schema checks; the arbiter cites the clause and voids. | `VOIDED` |
 | `forged` | Someone who is not Tidewater signs the contract as Tidewater (an unregistered key). Trustee rejects it with `rejected_identity` before PayPal is called: zero PayPal requests. | `outcome: rejected_identity` |
 | `outside` | Northwind's and Tidewater's agents act as outside clients of this server's own public `/v1` API (registration, signed mandates, contract, delivery, attestation), each HTTP call shown as an `api` row next to the platform's own rows. | `SETTLED` |
+| `a2a` | Northwind and Tidewater are separate A2A agents: they find each other by Agent Card, negotiate with signed offers, open the escrow at Trustee, and Tidewater ships when Trustee pushes "funds held". | `SETTLED` |
+| `overreach` | The human said "at most $175"; the seller will not go below $190. The signed intent mandate refuses to pay unattended and steps up to a human approval (simulated in dry-run). | `SETTLED` after step-up |
+| `partial` | 500 of 5,000 rows fail the row checks; a signed pro-rata term captures the valid 90% ($140.40 of $156.00) and releases the rest. Listed with `ARENA_PARTIAL_SCENARIO=1`. | `SETTLED` (partial) |
+| `pricefeed` | A competitor price feed; the buyer samples 20 rows and checks them against live Channel3 offers before paying. Listed with `ARENA_PRICEFEED_SCENARIO=1`. | `SETTLED` |
+| `pricefeed-stale` | The hash matches, but the prices are months old; the market check fails and the escrow is voided. | `VOIDED` |
+| `pricefeed-mixed` | 8 of 40 rows are wrong; pro-rata capture of the sampled rows that checked out. | `SETTLED` (partial) |
 
-The grid has `signer` and `check` columns (`verified` / `rejected`) for every signature the Trustee checks,
-kind filter chips and a search box. A forged signature turns its row red. The strip shows a `signatures` chip and
-whether PayPal is `sandbox` or `dry-run`.
+**The page.** One answer leads: what happened to the money and why, in the words of the deal's `summary` (the same
+text agents get from `GET /v1/deals/{id}` and the A2A task status). Under it, a line shows where the money is
+(buyer, PayPal hold, seller) and a step-by-step progress bar. Everything else is one click away under
+**See how it happened**:
+
+- **Conversation:** what the agents said and did.
+- **Checks:** signatures, spending rules and the delivery, failures first.
+- **Ledger:** the raw tape in AG Grid, with `signer` and `check` columns, kind filters and search.
+
+The header says whether PayPal is in the sandbox or a dry run.
 
 `outside` calls the arena's own `/v1` over a real socket: `http://127.0.0.1:$PORT` by default (`PORT`, default
 8000), or `ARENA_SELF_URL` if the server is reachable under another address. It sends `TRUSTEE_OPERATOR_TOKEN`
@@ -135,7 +174,9 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/agents` | agent key + principal | register an agent; the principal vouches for it |
 | `POST /v1/mandates`, `POST /v1/mandates/{agent_id}/revoke` | principal | publish / revoke a spend or receive mandate |
 | `POST /v1/deals` | buyer and seller (contract digest) | check both mandates, hold funds; idempotent on `deal_id` |
+| `POST /v1/deals/{id}/deliverable` | none (stored by sha256) | hand Trustee the file so it checks it itself |
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
+| `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
 | `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
 | `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
 | `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
@@ -147,15 +188,29 @@ use. Every mutating call is signed, so it is attributable to a key.
 
 **Errors.** Bad or missing signature `401`; mandate refused `403` (with `violations`); unknown deal or
 agent `404`; illegal state or conflicting retry `409`; PayPal failure `502` (the body carries the deal view,
-funds are where it says, and repeating the call is safe).
+funds are where it says, and repeating the call is safe); storage unable to record the payment intent `503` (no
+PayPal call was made, nothing moved, and repeating the call is safe).
 
 **Auth.** `POST /v1/principals` is open unless `TRUSTEE_OPERATOR_TOKEN` is set. That is fine for a
 hackathon and not for the open internet. `POST /v1/deals/{id}/resolve` always needs that token and returns
 `403` when none is configured. `GET` endpoints are public.
 
 **Durability.** With `TRUSTEE_DB_PATH` set, principals, agents, mandates, deals and the event tape live in
-SQLite. On start the service reloads open deals, re-reserves their budgets and resumes sweeping them, so a
-restart cannot strand a PayPal hold. The default (`:memory:`) persists nothing.
+SQLite. Before every PayPal call that can hold or move money, the deal and the pending operation (with its request
+id) are written first; if that write fails, PayPal is not called. On start the service reloads open deals,
+re-reserves their budgets and resumes sweeping them, and finishes any escrow opening that was recorded but never
+answered with the same request id, so a crash or restart cannot strand a PayPal hold. Ledger events that fail to
+save are retried in order, never dropped. The default (`:memory:`) persists nothing.
+
+**Trustee checks the file itself.** When the seller uploads the file before recording the delivery, Trustee runs the
+contract's checks on those exact bytes (hash, schema and row rules, the Channel3 market check) and rules on its own
+result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
+payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
+scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
+
+**Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
+contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human
+(`/resolve`). See [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md) §4.1.
 
 | Var | Default | Meaning |
 |---|---|---|
@@ -205,7 +260,14 @@ Proof of concept (sandbox only; refuses `PAYPAL_ENV=live`):
 ```bash
 python examples/sandbox_poc.py --settle      # or --refund; open the printed approve URL as a sandbox buyer
 python examples/sandbox_poc.py --dry-run     # same steps with no network or credentials
+python examples/sandbox_poc.py --settle --auto-approve   # a browser approves as the sandbox buyer
 ```
+
+`--auto-approve` (`uv sync --extra e2e`) logs in as `PAYPAL_SANDBOX_BUYER_EMAIL` / `PAYPAL_SANDBOX_BUYER_PASSWORD` in
+local Chromium, or in a remote browser such as one started by KERNEL when `PAYPAL_E2E_CDP_URL` is set, and approves.
+Success means PayPal redirected to the return URL. The `sandbox-e2e` workflow runs this weekly once the sandbox secrets
+are set. The selectors for PayPal's pages are a best guess, not yet checked against the live sandbox; override them
+with `PAYPAL_E2E_SELECTORS` (`src/trustee/sandbox_approver.py`).
 
 ### A2A: JSON-RPC and push notifications
 
@@ -257,7 +319,7 @@ python examples/a2a_network.py --cheat    # Tidewater ships junk: refunded, noth
 
 Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#the-a2a-network-northwind-and-tidewater-as-agents).
 
-### SDKs and Postman
+### Client libraries and Postman
 
 - **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route, every `/.well-known` route and the `/a2a` endpoint. Regenerate it with
   `python scripts/export_openapi.py` after an API change. `tests/test_openapi.py` fails when the file is stale.
@@ -265,10 +327,10 @@ Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#t
   deal over A2A (folder 4).
   Import it with the environment file in the same folder. Its signed bodies use public demo keys, so do not
   point it at a server that holds money.
-- **Generated SDKs.** The `sdks` workflow builds Python and TypeScript SDKs with APIMatic. It needs the
-  `APIMATIC_API_KEY` secret and skips with a notice until that secret is set.
+- **Python client.** `trustee.client.TrusteeClient` signs registrations, mandates and revocations, and refuses to
+  send a contract, delivery or attestation that the right party has not signed.
 
-Setup, usage sketches and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
+The Python client, retry rules and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
 
 ## Autonomous payments: consent once, then no clicks
 
@@ -321,30 +383,49 @@ before.
 ```
 src/trustee/
   protocol.py        offer/contract JSON protocol (the only thing settlement sees)
-  mandate.py         AP2-lite mandate engine
+  identity.py        Ed25519 agent and principal keys, the registry, signature checks
+  mandate.py         AP2-lite mandate engine (+ optional reputation rules)
   intent.py          intent mandates (human-not-present): signed instruction + limits, the rule engine, drafting
   funding.py         vaulted PayPal funding sources behind opaque funding_refs
   receipts.py        signed settlement receipts and the Trustee signing key
+  summary.py         the plain-language verdict every deal reports (status, headline, reasons, next step, money)
+  verification.py    Trustee checks the delivered file itself: content-addressed store, contract checks, counts
   verify.py          `python -m trustee.verify`: check a receipt offline
+  sandbox_approver.py  approve a PayPal sandbox order in a browser (local Chromium or remote over CDP)
   state.py           deal state machine (guarded, idempotent, transition hook)
-  paypal.py          PayPal adapter (authorize/capture/void, approval flow, dry-run)
+  paypal.py          PayPal adapter (authorize/capture/void/reauthorize, approval flow, vault, webhooks, dry-run)
+  partial.py         pro-rata settlement math (pure Decimal, no I/O, no LLM)
+  sweeper.py         deadline sweeper: auto-void lapsed deals, renew aging authorizations
   ledger.py          append-only, hash-chained event log with subscribers
+  store.py           durable SQLite store: principals, agents, mandates, deals, events, webhooks
+  reputation.py      agent reputation across the deals it was a party to
+  alerts.py          human alerts (Zapier Catch Hook) when money needs a decision
+  channel3.py        Channel3 client; pricefeed.py checks a delivered price feed against it
+  analyst.py         ask the Elastic Agent Builder ledger analyst over A2A
   llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama)
-  agents/            trustee, buyer, seller, arbiter
-  platform/          public /v1 API, A2A Agent Card, DealService (durable multi-deal host)
+  agents/            trustee, buyer, seller, negotiator, arbiter
+  platform/          public /v1 API, reputation routes, A2A Agent Card, DealService (durable multi-deal host)
   a2a/               A2A JSON-RPC server + client, skills, deal tasks, push notifications
-  network/           Northwind and Tidewater as A2A agents (cards, skills, signed negotiation, delivery)
+  network/           Northwind and Tidewater as A2A agents (cards, skills, signed negotiation, delivery,
+                     Zapier MCP back office)
+  elastic/           optional ledger shipping to Elasticsearch, ES|QL reputation
   client.py          TrusteeClient SDK
   arena/
     runner.py        DealRunner — composes one deal, emits the tape
     api.py           FastAPI + SSE
     scenario.py      scenarios are data, not code
+    outside.py       the `outside` scenario (agents as HTTP clients of /v1)
+    a2a_flow.py      the `a2a` scenario (three A2A agents)
+    approval.py      waiting for a payer to approve at PayPal
     scripted.py      ScriptedLLM (recorded moves, no network)
     rows.py          ledger Event -> grid row
-    fixtures/        goods store, manifest, scenarios, transcripts, CLI runners
+    fixtures/        goods store, manifest, scenarios, transcripts, Channel3 recordings, CLI runners
 arena/ui/            Vite + React + AG Grid Community
-tests/               340+ tests: agents, runner, API, SSE, PayPal request shapes, money path,
-                     identity, mandates, store, platform API, approval, webhooks, A2A, arena scenarios
+openapi/ postman/    API description and a runnable collection (see Client libraries and Postman)
+examples/            a2a_deal.py, a2a_network.py, sandbox_poc.py
+tests/               650+ tests: agents, runner, API, SSE, PayPal request shapes, money path, identity,
+                     mandates, intents, store, platform API, approval, webhooks, A2A, partial capture,
+                     Elastic, Channel3, Zapier MCP, durability, arena scenarios
 ```
 
 ## Configuration
@@ -358,10 +439,14 @@ tests/               340+ tests: agents, runner, API, SSE, PayPal request shapes
 | `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL` | `{TRUSTEE_PUBLIC_URL}/v1/paypal/return` / `/cancel` | used by the payer-approval redirect |
 | `LLM_BASE_URL` | NIM | any OpenAI-compatible endpoint |
 | `LLM_API_KEY` | empty | empty ⇒ scripted mode |
-| `LLM_MODEL` | `meta/llama-3.1-70b-instruct` | |
+| `LLM_MODEL` | `nvidia/nemotron-3.5-lightning-30b-a3b` | |
+| `LLM_EXTRA_BODY` / `LLM_TIMEOUT` | empty / `30` | JSON merged into each request (Nemotron needs thinking off); seconds before falling back to the recorded moves |
 | `TRUSTEE_LEDGER_PATH` | in-memory | JSONL durability when set |
 | `ARENA_APPROVAL_POLL_SECONDS` / `ARENA_APPROVAL_TIMEOUT_SECONDS` | `3` / `300` | how the arena waits for the buyer to approve in PayPal |
 | `ARENA_SELF_URL` | `http://127.0.0.1:$PORT` | where the `outside` scenario reaches the arena's own `/v1` API |
+| `ARENA_PARTIAL_SCENARIO` / `ARENA_PRICEFEED_SCENARIO` | unset | `1` lists the `partial` / three `pricefeed` scenarios in the UI |
+| `ARENA_UI_DIR` | `arena/ui/dist` | directory that serves the built UI |
+| `PAYPAL_SELLER_EMAIL` | placeholder | the order's payee; against the real sandbox it must be one of your sandbox business accounts |
 | `TRUSTEE_DB_PATH` etc. | | see [Platform API](#platform-api-a2a) |
 
 ## Demo plan (≤3 min)
@@ -373,13 +458,12 @@ tests/               340+ tests: agents, runner, API, SSE, PayPal request shapes
    contracted file name: a renamed column, 312 rows, reused order ids. The sha256
    fails, the arbiter cites "sha256 matches contract", escrow voids. Northwind keeps
    its money. *That* is why the trust layer exists.
-3. **Forged run** (20 s) — "Impostor seller". Someone signs as Tidewater with a key
-   nobody registered. Point at the red `SIGNATURE REJECTED` row and the
-   `signatures: forged — rejected` chip: the Trustee refuses before any money moves,
-   and the tape has no PayPal rows.
+3. **Impostor** (20 s) — someone signs as Tidewater with a key nobody registered. The
+   page says "Stopped before payment. No money moved." and the Checks tab shows the one
+   failed signature: the Trustee refuses before PayPal is called.
 4. **Outside agents** (30 s) — two agents that live on their own servers register,
-   sign mandates and a contract and settle through `/v1`. Filter the grid to `api` to
-   see each HTTP call, then to `identity` to see the four verified signatures.
+   sign mandates and a contract and settle through `/v1`. In the Ledger tab, filter to
+   `api` to see each HTTP call, then to `identity` to see the four verified signatures.
 
 With sandbox credentials, run the honest scenario once more live for the real-money-path
 step: the page shows "waiting for buyer approval" and the **Approve in PayPal sandbox**
@@ -388,7 +472,8 @@ tape. It is test money, and the page says so.
 
 ## Status
 
-P1 (runner + service) and P2 (UI) are built and green. The payer-approval flow, PayPal webhooks and
+P1 (runner + service) and P2 (UI) are built and green, along with the platform API, A2A, intent-mandate autonomy,
+partial capture and the optional Elastic, Zapier and Channel3 integrations. The payer-approval flow, PayPal webhooks and
 reconciliation are implemented and tested against a mocked PayPal. P3, the real-sandbox run, is still open:
 nobody has run `examples/sandbox_poc.py` or the webhook path with credentials, so the real-PayPal behavior is
 unverified. `docs/BUILD-CRITIQUE.md` §1 lists what was broken in the adapter.

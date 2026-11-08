@@ -50,6 +50,7 @@ ALL_KINDS: tuple[str, ...] = (
     "approval_expired",
     "approval_failed",
     "paypal_call_failed",
+    "storage_unavailable",
 )
 DEFAULT_KINDS = ALL_KINDS
 
@@ -148,6 +149,14 @@ def classify(ev: Event) -> tuple[str, str, str, str] | None:
         return _approval_expired("The deadline passed before the payer approved; no funds were held.")
     if kind == "note" and p.get("op") == "approval" and p.get("explanation") == "payer cancelled approval at PayPal":
         return _approval_expired("The payer cancelled the approval at PayPal; no funds were held.")
+    if kind == "note" and p.get("op") == "intent_not_recorded":
+        return (
+            "storage_unavailable",
+            "Storage down — money call not attempted",
+            f"Trustee could not record the {p.get('money_op', 'PayPal')} intent, so it did not call PayPal. Funds are "
+            "where they were; the call can be retried once storage recovers.",
+            "critical",
+        )
     if kind == "paypal" and p.get("error") and p.get("op") in ("capture", "void"):
         return (
             "paypal_call_failed",

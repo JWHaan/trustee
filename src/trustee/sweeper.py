@@ -14,7 +14,10 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
+from typing import Any
 
 from .agents.trustee import Trustee, TrusteeDecision
 from .protocol import Contract
@@ -30,6 +33,9 @@ class DeadlineSweeper:
         self.reauthorize = os.environ.get("TRUSTEE_REAUTHORIZE") == "1" if reauthorize is None else bool(reauthorize)
         self._lock = threading.Lock()
         self._deals: dict[str, tuple[Trustee, Contract]] = {}
+        # The host's per-deal lock, taken around each deal's tick so the sweep and a request for the same deal never
+        # interleave (a host that persists from inside a Trustee call needs this order: deal lock, then Trustee lock).
+        self.deal_lock: Callable[[str], AbstractContextManager[Any]] | None = None
 
     def register(self, trustee: Trustee, contract: Contract) -> None:
         with self._lock:
@@ -54,16 +60,17 @@ class DeadlineSweeper:
             items = list(self._deals.items())
         results: list[tuple[str, TrusteeDecision]] = []
         for deal_id, (trustee, contract) in items:
-            try:
-                decision = trustee.tick(contract, now)
-            except Exception:  # noqa: BLE001 - isolate deals from each other
-                log.exception("sweeper: tick failed for %s", deal_id)
-                continue
-            if decision.action == "no-op" and self.reauthorize:
+            with self.deal_lock(deal_id) if self.deal_lock is not None else nullcontext():
                 try:
-                    decision = trustee.reauthorize(contract, now)
-                except Exception:  # noqa: BLE001 - a renewal problem must never stop the sweep
-                    log.exception("sweeper: reauthorize failed for %s", deal_id)
+                    decision = trustee.tick(contract, now)
+                except Exception:  # noqa: BLE001 - isolate deals from each other
+                    log.exception("sweeper: tick failed for %s", deal_id)
+                    continue
+                if decision.action == "no-op" and self.reauthorize:
+                    try:
+                        decision = trustee.reauthorize(contract, now)
+                    except Exception:  # noqa: BLE001 - a renewal problem must never stop the sweep
+                        log.exception("sweeper: reauthorize failed for %s", deal_id)
             if decision.action != "no-op":
                 results.append((deal_id, decision))
             if trustee.deal.is_terminal:

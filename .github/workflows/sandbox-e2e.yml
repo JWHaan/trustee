@@ -1,0 +1,65 @@
+# Runs one real escrowed payment against the PayPal SANDBOX, end to end, with no person:
+# create the order, approve it in a browser as the sandbox buyer, authorize (funds held), capture.
+#
+# Every other test mocks PayPal. This is the check that the money path works against PayPal itself.
+#
+# Setup (Settings -> Secrets and variables -> Actions -> Secrets), all sandbox values, never live ones:
+#   PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET   the sandbox REST app
+#   PAYPAL_SELLER_EMAIL                      a sandbox BUSINESS account (the payee)
+#   PAYPAL_SANDBOX_BUYER_EMAIL / _PASSWORD   a sandbox PERSONAL account (the payer)
+# Until PAYPAL_CLIENT_ID is set, the job prints a notice and exits 0.
+#
+# The browser is Chromium on the runner. To use a remote browser instead (for example one started by KERNEL),
+# set PAYPAL_E2E_CDP_URL to its CDP WebSocket URL in a step before the run; see docs/SPONSORS.md.
+#
+# PayPal changes its login and review pages. If the browser step times out, override the selectors with the
+# PAYPAL_E2E_SELECTORS repository variable (JSON, see src/trustee/sandbox_approver.py).
+
+name: sandbox-e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly, Monday 06:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PAYPAL_ENV: sandbox
+      PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+      PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+      PAYPAL_SELLER_EMAIL: ${{ secrets.PAYPAL_SELLER_EMAIL }}
+      PAYPAL_SANDBOX_BUYER_EMAIL: ${{ secrets.PAYPAL_SANDBOX_BUYER_EMAIL }}
+      PAYPAL_SANDBOX_BUYER_PASSWORD: ${{ secrets.PAYPAL_SANDBOX_BUYER_PASSWORD }}
+      PAYPAL_E2E_SELECTORS: ${{ vars.PAYPAL_E2E_SELECTORS }}
+    steps:
+      - name: Check for sandbox credentials
+        id: creds
+        run: |
+          if [ -z "$PAYPAL_CLIENT_ID" ]; then
+            echo "::notice::PAYPAL_CLIENT_ID is not set; skipping the sandbox end-to-end run."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.creds.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.creds.outputs.ready == 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          uv sync --extra e2e
+          uv run playwright install --with-deps chromium
+
+      - name: Escrowed payment against the sandbox (approve in a browser, then capture)
+        if: steps.creds.outputs.ready == 'true'
+        run: uv run python examples/sandbox_poc.py --amount 1.00 --settle --auto-approve --timeout 180

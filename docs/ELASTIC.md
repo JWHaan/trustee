@@ -47,7 +47,7 @@ uv run python scripts/elastic_setup.py --dry-run   # print every request first
 uv run python scripts/elastic_setup.py
 ```
 
-It is idempotent (re-running updates in place). It creates the index template and index, five ES|QL tools and the agent `trustee-ledger-analyst`, then prints the agent's A2A card URL. Use `--legacy-param-types` on Elastic Stack 9.2 to 9.3 (tool parameter types are `keyword` there, `string` on Serverless and 9.4+).
+It is idempotent (re-running updates in place). It creates the index template and index, seven ES|QL tools and the agent `trustee-ledger-analyst`, then prints the agent's A2A card URL. Use `--legacy-param-types` on Elastic Stack 9.2 to 9.3 (tool parameter types are `keyword` there, `string` on Serverless and 9.4+).
 
 ## Environment
 
@@ -121,7 +121,7 @@ A brand-new counterparty has 0 deals and a 0.0 dispute rate, so use `max_counter
 
 ## Ledger analyst
 
-`scripts/elastic_setup.py` creates these Agent Builder ES|QL tools over the ledger index: `trustee-deal-history` (all events of a deal), `trustee-spend` and `trustee-earnings` (settled money by agent and currency since a date), `trustee-void-reasons` (recent voids with reasons), `trustee-agent-reputation`. The agent `trustee-ledger-analyst` has only those tools and is instructed to answer from tool results, cite deal ids, and say it cannot move money (it has no tool that could).
+`scripts/elastic_setup.py` creates these Agent Builder ES|QL tools over the ledger index: `trustee-deal-history` (all events of a deal), `trustee-spend` and `trustee-earnings` (settled money by agent and currency since a date), `trustee-void-reasons` (recent voids with reasons), `trustee-agent-reputation`, and two accountability tools: `trustee-money-incidents` (deals that need a person) and `trustee-contradicted-claims` (buyers whose refund claims the signed record contradicted). The agent `trustee-ledger-analyst` has only those tools and is instructed to answer from tool results, cite deal ids, and say it cannot move money (it has no tool that could).
 
 Agent Builder serves it over A2A, with API-key auth and no streaming: card at `GET {KIBANA_URL}/api/agent_builder/a2a/trustee-ledger-analyst.json`, JSON-RPC at `POST {KIBANA_URL}/api/agent_builder/a2a/trustee-ledger-analyst` using `message/send`.
 
@@ -130,3 +130,24 @@ KIBANA_URL=... ELASTIC_API_KEY=... uv run python -m trustee.analyst "why was dea
 ```
 
 `trustee.analyst.LedgerAnalyst` is the client (`ask(question) -> str`). Trustee never calls the analyst from the payment path. Spend by principal is not a tool: the ledger rows carry agent ids, not principals.
+
+## Accountability: incidents that need a person
+
+Some outcomes stop on purpose and wait for a human. Each leaves a ledger row that Elastic receives like any other:
+
+| Ledger row | Meaning |
+|---|---|
+| `kind: paypal_alert` | PayPal did something the deal state cannot follow (a reversed capture, a resume that could not finish) |
+| `kind: note`, `op: intent_not_recorded` | Storage could not record a payment intent, so no PayPal call was made |
+| `kind: note`, `op: evidence_check` | A buyer's hash-mismatch claim was contradicted by the seller's signed delivery and the contract; funds held |
+| `kind: note`, `op: resume` | An escrow opening interrupted by a crash was finished with the same PayPal request id |
+| `kind: ruling`, `decision: uphold` | A dispute is holding funds until someone decides or the dispute window ends |
+
+`trustee-money-incidents` lists them, newest first. `trustee-contradicted-claims` counts contradicted claims per
+buyer, which is the signal for a buyer who rejects correct files to get refunds. The filter they share is
+`INCIDENT_FILTER` in `src/trustee/elastic/queries.py`.
+
+To be paged rather than ask, create a Kibana **Elasticsearch query** rule on the ledger index with the ES|QL from
+`money_incidents_query` (drop the `?since` and `?limit` parameters; the rule's time window replaces them), run it
+every minute, and send its action to the same Zapier hook as the other alerts or to Slack. The setup script does not
+create rules, because rule types and connectors differ between deployments.
