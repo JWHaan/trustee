@@ -68,6 +68,7 @@ def summarize(
     dispute_deadline: str | None = None,
     human_present: bool | None = None,
     authority_outcome: str | None = None,
+    verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     amount = _amount(price)
     cur = currency or "USD"
@@ -109,6 +110,8 @@ def summarize(
             valid, total = settlement.get("units_valid"), settlement.get("units_total")
             if valid is not None and total:
                 reasons.append(f"{valid} of {total} items passed the checks; the contract pays for the valid share.")
+            if verification:
+                reasons.append("Trustee counted the valid items itself, not only the buyer's word.")
             return done(
                 "partly_paid",
                 "warn",
@@ -119,6 +122,8 @@ def summarize(
             reasons.append(str(ruling.get("reasoning") or "The dispute was decided for the seller."))
         else:
             reasons.append(buyer_reason or "The delivery passed every check in the contract.")
+        if verification and verification.get("passed"):
+            reasons.append("Trustee checked the file itself; it matches the contract.")
         if authority_outcome == "step_up":
             reasons.append("A person approved it, because it was outside the buyer's signed instruction.")
         elif human_present is False:
@@ -131,6 +136,8 @@ def summarize(
             clause = ruling.get("clause")
             if clause:
                 reasons.append(f"It failed the contract check \u201c{clause}\u201d.")
+            if verification and not verification.get("passed"):
+                reasons.append("Trustee checked the file itself, not only the buyer's word.")
             # The buyer's own words are the full evidence; the ruling's copy is shortened by the arbiter.
             reasons.append(buyer_reason or ruling.get("reasoning") or "")
         elif refusal:

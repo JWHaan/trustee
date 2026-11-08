@@ -78,6 +78,7 @@ from ..receipts import build_receipt, load_signing_key
 from ..state import Deal, DealState
 from ..store import Store
 from ..summary import summarize
+from ..verification import BlobStore, DeliveryVerifier
 from ..verify import verify_receipt
 from .a2a_flow import A2AFlow
 from .approval import ApprovalGate, ApprovalWait, wait_for_approval
@@ -127,6 +128,7 @@ class RunResult:
     settlement: dict[str, Any] | None = None  # pro-rata settlement: captured, released, units
     refusal: str | None = None  # why Trustee refused the deal before any money was held, in its own words
     authority_outcome: str | None = None  # the intent check's verdict: autonomous | step_up | reject (None: no intent)
+    verification: dict[str, Any] | None = None  # Trustee's own check of the delivered file
 
     def snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {
@@ -168,7 +170,10 @@ class RunResult:
             buyer_reason=attest.get("reason"),
             human_present=self.human_present,
             authority_outcome=self.authority_outcome,
+            verification=self.verification,
         )
+        if self.verification is not None:
+            snap["verification"] = self.verification
         return snap
 
 
@@ -203,6 +208,7 @@ class DealRunner:
         self.store = store or ArtifactStore.load(FIXTURES)
         self.checkers = checkers if checkers is not None else default_checkers()
         self.counters = default_counters()
+        self._blobs: BlobStore | None = None  # where sellers hand Trustee the delivered file; made on first use
         # Only the `outside` flow uses these: an HTTP client for the arena's own /v1 API and the
         # platform's ledger, whose rows for the deal are copied onto the run's tape.
         self.self_client = self_client
@@ -428,6 +434,12 @@ class DealRunner:
             return result
 
         delivery = seller.deliver(contract, cheat=scenario.cheat).sign(ident.keys[SELLER_ID])
+        # The seller hands Trustee the same bytes it sent the buyer, so Trustee can check them itself.
+        blobs = self._blob_store()
+        sent = store.received(contract.good.deliverable_ref)  # the bytes the seller actually sent this run
+        if sent.is_file():
+            blobs.put(sent.read_bytes(), deal_id)
+        trustee.verifier = DeliveryVerifier(blobs, self.checkers, self.counters).verify
         trustee.on_delivery(delivery, contract)
 
         attest = buyer.verify_delivery(contract, delivery).sign(ident.keys[BUYER_ID])
@@ -435,6 +447,7 @@ class DealRunner:
 
         result = self._result(run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from)
         result.attest = {"verdict": attest.verdict, "reason": attest.reason, "evidence": attest.evidence}
+        result.verification = trustee.snapshot().get("verification")
         result.turns = turns
         self._attach_receipt(result, deal, trustee, contract)
         self.ledger.append(
@@ -447,6 +460,11 @@ class DealRunner:
             note=f"{effective} run, {turns} negotiation turns",
         )
         return result
+
+    def _blob_store(self) -> BlobStore:
+        if self._blobs is None:
+            self._blobs = BlobStore()
+        return self._blobs
 
     # --------------------------------------------------------------- autonomy
 
@@ -725,6 +743,9 @@ class DealRunner:
             receipt=done.receipt,
             receipt_verified=done.receipt_verified,
             human_present=None if done.receipt is None else bool(done.receipt.get("human_present", True)),
+            settlement=view.get("settlement"),
+            verification=view.get("verification"),
+            authority_outcome=(view.get("authority") or {}).get("outcome"),
         )
         if done.outcome is not None:
             self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=done.outcome)

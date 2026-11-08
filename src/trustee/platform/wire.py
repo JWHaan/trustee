@@ -203,3 +203,8 @@ class ReceiptVerifyIn(BaseModel):
     events: list[dict[str, Any]] | None = Field(
         default=None, description="Optional events of the deal (GET /v1/deals/{id}/events): checks the hash chain."
     )
+
+
+def download_signing_bytes(deal_id: str) -> bytes:
+    """What a buyer signs to download the delivered file from Trustee."""
+    return f"trustee-download:{deal_id}".encode()

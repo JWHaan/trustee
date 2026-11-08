@@ -95,10 +95,14 @@ Fix it in two steps:
    **Trade-off:** a seller who signs a false hash is now caught by that human review instead of automatically.
    If nobody acts within the dispute window, the existing rule for an upheld dispute applies and the seller is
    paid. Step 2 removes the need to choose.
-2. **For scale: Trustee verifies the delivery.** The seller uploads to content-addressed storage that Trustee
-   controls (or a presigned bucket). Trustee computes the hash and runs the contract's checks itself: schema, row
-   rules, the Channel3 market check, a test suite or an API SLA probe. Trustee then releases the file to the buyer
-   and the capture together. The buyer's verdict becomes advisory. The checks become a library of **verifiers**,
+2. **Done: Trustee verifies the delivery.** The seller uploads the file to Trustee
+   (`POST /v1/deals/{id}/deliverable`), which stores it under its sha256 and runs the contract's checks itself: the
+   hash, the schema and row rules, the Channel3 market check (`src/trustee/verification.py`). A failed check refunds
+   the buyer on Trustee's own finding; a passed check with a buyer rejection holds the money for a person; for
+   pro-rata contracts Trustee's count of valid items sets the amount. The buyer downloads the file from Trustee once
+   the payment settles (`GET` on the same path, signed by the buyer). The buyer's verdict is now advisory when Trustee
+   holds the file; without an upload, the buyer's check is still the fallback. Next: a test-suite and an API-SLA
+   verifier, and storage in an object store for production. The checks become a library of **verifiers**,
    each a pure function named in the signed acceptance criteria. `partial.py` and `pricefeed.py` already have this
    shape.
 

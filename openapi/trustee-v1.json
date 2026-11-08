@@ -1797,6 +1797,239 @@
         ]
       }
     },
+    "/v1/deals/{deal_id}/deliverable": {
+      "get": {
+        "description": "Signed by the buyer's agent key: `X-Trustee-Signature` is the signature over the UTF-8 bytes of `trustee-download:{deal_id}`. Available only once the deal is SETTLED, so payment and file change hands together.",
+        "operationId": "download_deliverable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-trustee-signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Trustee-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not signed by the buyer."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal, or Trustee holds no file for it."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The payment has not settled."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The buyer downloads the delivered file after the payment settles",
+        "tags": [
+          "Deals"
+        ]
+      },
+      "post": {
+        "description": "The seller sends the file's raw bytes (`application/octet-stream`) while funds are held, then records the delivery with that file's sha256 as `content_hash`. Trustee stores the file under its sha256, runs the contract's checks on it, and rules on its own result rather than on the buyer's report. The buyer gets the file from `GET` on the same path once the payment settles. No signature is needed here: only the file under the hash the seller signs is ever checked.",
+        "operationId": "upload_deliverable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The deal is not holding funds."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The file is too large."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The file is empty."
+          }
+        },
+        "summary": "Hand Trustee the delivered file so it can check it itself",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
     "/v1/deals/{deal_id}/delivery": {
       "post": {
         "description": "The seller signs the delivery with its agent key. `content_hash` is the sha256 of the bytes it delivered. The buyer checks that hash against `good.sha256` when it attests. `deliverable_ref` must match the contract. A delivery signed by anyone other than the seller is a 401.",

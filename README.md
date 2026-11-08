@@ -174,7 +174,9 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/agents` | agent key + principal | register an agent; the principal vouches for it |
 | `POST /v1/mandates`, `POST /v1/mandates/{agent_id}/revoke` | principal | publish / revoke a spend or receive mandate |
 | `POST /v1/deals` | buyer and seller (contract digest) | check both mandates, hold funds; idempotent on `deal_id` |
+| `POST /v1/deals/{id}/deliverable` | none (stored by sha256) | hand Trustee the file so it checks it itself |
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
+| `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
 | `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
 | `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
 | `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
@@ -199,6 +201,12 @@ id) are written first; if that write fails, PayPal is not called. On start the s
 re-reserves their budgets and resumes sweeping them, and finishes any escrow opening that was recorded but never
 answered with the same request id, so a crash or restart cannot strand a PayPal hold. Ledger events that fail to
 save are retried in order, never dropped. The default (`:memory:`) persists nothing.
+
+**Trustee checks the file itself.** When the seller uploads the file before recording the delivery, Trustee runs the
+contract's checks on those exact bytes (hash, schema and row rules, the Channel3 market check) and rules on its own
+result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
+payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
+scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
 
 **Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
 contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human
@@ -380,6 +388,7 @@ src/trustee/
   funding.py         vaulted PayPal funding sources behind opaque funding_refs
   receipts.py        signed settlement receipts and the Trustee signing key
   summary.py         the plain-language verdict every deal reports (status, headline, reasons, next step, money)
+  verification.py    Trustee checks the delivered file itself: content-addressed store, contract checks, counts
   verify.py          `python -m trustee.verify`: check a receipt offline
   sandbox_approver.py  approve a PayPal sandbox order in a browser (local Chromium or remote over CDP)
   state.py           deal state machine (guarded, idempotent, transition hook)
