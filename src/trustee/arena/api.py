@@ -479,6 +479,7 @@ def create_app(
             "ledger": str(ledger.path) if ledger.path else "in-memory",
             "alerts": "webhook" if alert_sinks else "off",
             "store": service.store.path if service.store.path != ":memory:" else "in-memory",
+            "durability": service.durability(),
         }
 
     # ------------------------------------------------------------------- UI

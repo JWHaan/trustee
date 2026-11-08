@@ -103,6 +103,8 @@ class DealService:
         self._by_authz: dict[str, str] = {}  # PayPal authorization id -> deal id
         self._poll_cursor = 0
         self._revoked: set[str] = set()  # sticky: a revoked agent id never gets a mandate again
+        self._unpersisted: set[str] = set()  # deals whose latest state could not be written; retried each sweep
+        self.sweeper.deal_lock = self._deal_lock
         store.attach(ledger)  # the tape is durable
         self.rehydrate()
 
@@ -166,6 +168,22 @@ class DealService:
         return entry
 
     def _new_trustee(self, deal_id: str, snapshot: dict[str, Any] | None = None) -> Trustee:
+        trustee = self._build_trustee(deal_id, snapshot)
+        trustee.before_money = lambda contract: self._write_ahead(trustee, contract)
+        return trustee
+
+    def _write_ahead(self, trustee: Trustee, contract: Contract) -> None:
+        """Make a deal's money intent durable before its PayPal call; raise if that is not possible.
+
+        Runs inside a Trustee call, which the service only makes while holding the deal lock, so taking that
+        (re-entrant) lock here keeps the order deal lock -> Trustee lock everywhere. The ledger backlog is written
+        first: money does not move on top of events that are not on disk."""
+        with self._deal_lock(contract.deal_id):
+            self.store.flush_backlog()
+            snap = trustee.snapshot()
+            self.store.upsert_deal(contract.deal_id, snap["state"], contract.model_dump(mode="json"), snap)
+
+    def _build_trustee(self, deal_id: str, snapshot: dict[str, Any] | None = None) -> Trustee:
         judge = self.judge_factory() if self.judge_factory is not None else None
         recorder = self._state_recorder(deal_id)
         if snapshot is not None:
@@ -506,16 +524,20 @@ class DealService:
 
     def _persist(self, trustee: Trustee, contract: Contract) -> None:
         """Write the deal's state. Runs under the deal lock so snapshots land in order.
-        A storage failure is logged, not raised: the money has already moved, and failing the
-        request would not undo it."""
+        A storage failure is not raised: the money has already moved, and failing the request would not undo it.
+        The deal is remembered and written again on every sweep until it succeeds (see `durability`)."""
         with self._deal_lock(contract.deal_id):
             try:
                 snap = trustee.snapshot()
                 self._index(trustee, contract, snap)
                 self.store.upsert_deal(contract.deal_id, snap["state"], contract.model_dump(mode="json"), snap)
             except Exception:  # noqa: BLE001
-                log.exception("CRITICAL: could not persist deal %s; a restart may lose it", contract.deal_id)
+                with self._lock:
+                    self._unpersisted.add(contract.deal_id)
+                log.exception("CRITICAL: could not persist deal %s; retrying on every sweep", contract.deal_id)
                 return
+            with self._lock:
+                self._unpersisted.discard(contract.deal_id)
             if trustee.deal.is_terminal:
                 try:
                     self._issue_receipt(trustee, contract)
@@ -610,12 +632,21 @@ class DealService:
         rows = self.store.events(deal_id, after_seq=max(0, after_seq), limit=max(1, min(limit, 1000)))
         return {"deal_id": deal_id, "events": rows, "next_after_seq": rows[-1]["seq"] if rows else after_seq}
 
+    def durability(self) -> dict[str, int]:
+        """What is not yet on disk: ledger events and deal states waiting for a retry. Both should be 0."""
+        with self._lock:
+            deals = len(self._unpersisted)
+        return {"events_waiting": self.store.backlog_size, "deals_waiting": deals}
+
     def _raise_for(self, decision: TrusteeDecision, trustee: Trustee, contract: Contract, subject: str) -> None:
         if decision.action == "rejected_identity":
             raise ServiceError(401, decision.explanation or "identity check failed")
         if decision.action == "rejected_mandate":
             violations = decision.report.violations if decision.report is not None else [decision.explanation]
             raise ServiceError(403, "mandate check failed", violations=violations)
+        if decision.action == "unavailable":
+            # Storage could not record the intent, so nothing was sent to PayPal. Retrying is safe.
+            raise ServiceError(503, decision.explanation, deal=self._view(trustee, contract))
         if decision.action == "error":
             if subject == "delivery":
                 raise ServiceError(422, "delivery does not match the contract (deliverable_ref)")
@@ -640,7 +671,11 @@ class DealService:
             else:
                 trustee = self._new_trustee(contract.deal_id)
                 trustee.deal.transition(DealState.NEGOTIATING, "signed contract submitted")
-            decision = trustee.on_contract(contract)
+            if trustee.pending_money is not None and trustee.pending_money.get("op") == "authorize-create":
+                # The escrow opening was decided and recorded before; finish that call, do not decide again.
+                decision = trustee.resume_pending(contract)
+            else:
+                decision = trustee.on_contract(contract)
             if decision.action in ("rejected_identity", "rejected_mandate"):
                 # Never stored: a refused contract must not squat on the deal id or touch PayPal.
                 self._raise_for(decision, trustee, contract, "contract")
@@ -777,6 +812,16 @@ class DealService:
 
     def sweep(self, now: datetime | None = None) -> list[tuple[str, str]]:
         """Run the deadline sweeper once, then poll PayPal for payer approvals; persist what acted."""
+        with self._lock:
+            unpersisted = list(self._unpersisted)
+        for deal_id in unpersisted:
+            entry = self._entry(deal_id)
+            if entry is not None:
+                self._persist(*entry)
+        try:
+            self.store.flush_backlog()
+        except Exception:  # noqa: BLE001 - reported by `durability`; the sweep itself must go on
+            log.exception("sweep: ledger backlog still not persisted")
         results = self.sweeper.tick(now)
         acted: list[tuple[str, str]] = []
         for deal_id, decision in results:

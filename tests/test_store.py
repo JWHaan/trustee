@@ -161,6 +161,7 @@ def test_closed_store_does_not_raise_into_ledger_append(caplog: pytest.LogCaptur
     assert ev.kind == "paypal"
     assert len(ledger) == 1
     assert "failed to persist" in caplog.text
+    assert s.backlog_size == 1  # kept for a retry, not dropped
 
 
 def test_webhook_dedupe() -> None:

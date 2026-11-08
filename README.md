@@ -85,7 +85,7 @@ mode selector. No account, no login, no setup.
 | `GET /api/runs/{id}/events` | SSE: one `msg` per ledger row, then `done` |
 | `GET /api/ledger?limit=500` | flat rows for the grid |
 | `GET /api/scenarios` | fixture-driven scenario list (the ones the UI shows) |
-| `GET /healthz` | liveness + whether PayPal is dry-run |
+| `GET /healthz` | liveness, whether PayPal is dry-run, and `durability` (ledger events and deal states not yet on disk; both should be 0) |
 
 SSE is replay-first: a subscriber is pre-filled with everything the run has
 already emitted, then fed live, so refreshing mid-run shows the same tape in
@@ -157,15 +157,23 @@ use. Every mutating call is signed, so it is attributable to a key.
 
 **Errors.** Bad or missing signature `401`; mandate refused `403` (with `violations`); unknown deal or
 agent `404`; illegal state or conflicting retry `409`; PayPal failure `502` (the body carries the deal view,
-funds are where it says, and repeating the call is safe).
+funds are where it says, and repeating the call is safe); storage unable to record the payment intent `503` (no
+PayPal call was made, nothing moved, and repeating the call is safe).
 
 **Auth.** `POST /v1/principals` is open unless `TRUSTEE_OPERATOR_TOKEN` is set. That is fine for a
 hackathon and not for the open internet. `POST /v1/deals/{id}/resolve` always needs that token and returns
 `403` when none is configured. `GET` endpoints are public.
 
 **Durability.** With `TRUSTEE_DB_PATH` set, principals, agents, mandates, deals and the event tape live in
-SQLite. On start the service reloads open deals, re-reserves their budgets and resumes sweeping them, so a
-restart cannot strand a PayPal hold. The default (`:memory:`) persists nothing.
+SQLite. Before every PayPal call that can hold or move money, the deal and the pending operation (with its request
+id) are written first; if that write fails, PayPal is not called. On start the service reloads open deals,
+re-reserves their budgets and resumes sweeping them, and finishes any escrow opening that was recorded but never
+answered with the same request id, so a crash or restart cannot strand a PayPal hold. Ledger events that fail to
+save are retried in order, never dropped. The default (`:memory:`) persists nothing.
+
+**Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
+contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human
+(`/resolve`). See [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md) §4.1.
 
 | Var | Default | Meaning |
 |---|---|---|

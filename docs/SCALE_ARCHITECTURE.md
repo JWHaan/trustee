@@ -35,18 +35,30 @@ Three conclusions:
 
 ## 2. Two accountability gaps to close first
 
-Speed must not be bought by weakening the record. Two gaps exist today, and both get worse under load.
+Speed must not be bought by weakening the record. Two gaps existed, and both get worse under load. **Both are now
+fixed** (§6, steps 1 and 2); the descriptions are kept because the same rule carries into the target design.
 
 **2.1 The money call happens before the deal is durable.** `DealService.open_deal` calls PayPal through
 `Trustee.on_contract` and writes the deal row only afterwards (`_persist`). If the process dies after PayPal
 authorizes but before that write, the buyer's funds are held at PayPal with no deal row to sweep or reconcile. The
 events up to `CONTRACTED` are stored, and a client retry of the same `deal_id` recovers safely thanks to the
 deterministic request id, but nothing on the server side recovers it alone. The README's claim that "a restart cannot
-strand a PayPal hold" holds only for deals that were already written.
+strand a PayPal hold" held only for deals that were already written.
+
+*Fixed:* before every PayPal call that can hold or move money, the Trustee records the operation and its request id
+(`pending_money`) and the service writes the deal row with it (`DealService._write_ahead`). A deal whose
+escrow-opening call was recorded but never answered is finished by the next sweep, or by a client retry, with the
+same request id (`Trustee.resume_pending`). `tests/test_durability.py` crashes the process right after PayPal
+authorizes and checks that the restarted service ends with one hold, not zero or two.
 
 **2.2 A failed ledger write is logged and ignored.** `Store.attach` swallows persistence errors on purpose so the
 money path never stalls. The consequence is a PayPal capture with no durable record of it. Under load, with full
 disks or a failing database, that becomes likely.
+
+*Fixed:* a ledger event that cannot be written joins an ordered backlog and is retried before newer events, so each
+deal's chain lands intact. No PayPal call is made while the backlog or the intent cannot be written: the request
+answers `503` and nothing moves. A deal state that fails to save after money moved is rewritten on every sweep.
+`/healthz` reports both as `durability: {events_waiting, deals_waiting}`, which should stay at zero.
 
 The rule that fixes both: **write the intent, then move the money, then write the result.** No PayPal call without a
 committed record that it is about to happen; no state change without its events in the same transaction.
@@ -179,8 +191,8 @@ None of this is on the request path. Checkpointing reads committed events and co
 
 | Failure | Today | Target |
 |---|---|---|
-| Crash after PayPal authorizes, before the deal is written | Hold exists, deal row missing; recovered only if the client retries | Outbox row existed first; a worker retries with the same id and records the result |
-| Store write fails during a capture | Capture happens; event is logged as lost | State, events and outbox share one transaction; nothing moves without its record |
+| Crash after PayPal authorizes, before the result is written | Fixed: the intent was written first; the next sweep or a client retry finishes the call with the same id | Outbox row existed first; a worker retries with the same id and records the result |
+| Store write fails around a money call | Fixed: no PayPal call while the intent or earlier events cannot be written (`503`); late events are retried in order | State, events and outbox share one transaction; nothing moves without its record |
 | PayPal timeout on capture | Deal stays put; retry is safe; webhook reconciles (`reconcile` rows) | Same, plus the reconciler checks every open outbox row against PayPal |
 | Two requests for one deal at once | Per-deal lock in one process | Version check in the database, across all replicas |
 | Operator edits history | Detected per deal by `verify_chain` if someone holds a receipt | Detected globally: checkpoints held by others stop matching |
@@ -205,11 +217,11 @@ more replicas, not by making any single step faster.
 
 ## 6. Order of work in this repository
 
-1. **Write before the money call (§2.1).** Persist the deal at `CONTRACTED`, with the authorize request id, before
-   calling PayPal. On restart, a `CONTRACTED` deal without an escrow re-issues the authorize with the same id. Add a
-   crash-injection test.
-2. **Fail closed before money (§2.2).** If the intent record cannot be written, do not call PayPal. After money has
-   moved, keep retrying the write and raise an alert instead of logging and continuing.
+1. **Done. Write before the money call (§2.1).** The deal and its pending PayPal operation are written before the
+   call; an unanswered escrow opening is resumed with the same id. Crash-injection tests in
+   `tests/test_durability.py`.
+2. **Done. Fail closed before money (§2.2).** No PayPal call while the intent or the ledger backlog cannot be
+   written; failed writes are retried, not dropped, and reported by `/healthz`.
 3. **One transaction per request.** Buffer a request's ledger events and commit them with the deal row. Keep the
    chain head on the deal row.
 4. **Receipt key ids and a checkpoint endpoint.** Add `kid` to receipts, `GET /v1/checkpoints/latest` and inclusion
@@ -221,5 +233,5 @@ more replicas, not by making any single step faster.
 7. **Load test.** A Locust or k6 run against the API with a PayPal mock that adds realistic latency and errors, to
    replace the estimates in §5 with measurements.
 
-Steps 1 and 2 are small, close real money risks and are worth doing before any sandbox run. Steps 3 and 4 are where
-speed and verifiability improve together.
+Steps 3 and 4 are where speed and verifiability improve together. Which hackathon sponsor tools help with each
+step is in [SPONSORS.md](./SPONSORS.md).
