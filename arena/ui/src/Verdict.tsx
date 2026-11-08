@@ -175,9 +175,18 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
 
       <Timeline rows={rows} snap={snap} running={running} />
 
-      {ref ? (
+      {ref || (snap && !running) ? (
         <p className="v-ref">
-          PayPal order <span>{ref}</span>
+          {ref ? (
+            <>
+              PayPal order <span>{ref}</span>
+            </>
+          ) : null}
+          {snap && !running && snap.deal_id ? (
+            <a href={`/api/runs/${snap.run_id}/evidence`} target="_blank" rel="noopener noreferrer">
+              Evidence pack (signed JSON)
+            </a>
+          ) : null}
         </p>
       ) : null}
     </section>

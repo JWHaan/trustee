@@ -24,6 +24,7 @@ from typing import Any
 
 from ..agents.arbiter import Judge
 from ..agents.trustee import Trustee, TrusteeDecision, is_transient_paypal
+from ..evidence import build_evidence_pack
 from ..funding import FundingError, FundingRegistry
 from ..identity import AgentKey, AgentRecord, AgentRegistry, PrincipalRegistry, verify
 from ..intent import Autonomy, IntentBook, IntentMandate
@@ -483,6 +484,15 @@ class DealService:
         if existing is not None:
             return existing
         return self._issue_receipt(trustee, contract) or self._missing_receipt(deal_id)
+
+    def evidence(self, deal_id: str) -> dict[str, Any]:
+        """The signed dispute evidence pack for a deal (trustee.evidence): available at any state."""
+        trustee, contract = self._require(deal_id)
+        receipt = self.store.get_receipt(deal_id) if trustee.deal.is_terminal else None
+        events = self.store.events(deal_id, limit=100_000)
+        return build_evidence_pack(
+            contract=contract, snapshot=trustee.snapshot(), events=events, receipt=receipt, key=self.signing_key
+        )
 
     def _missing_receipt(self, deal_id: str) -> dict[str, Any]:
         raise ServiceError(500, f"could not issue a receipt for {deal_id}")

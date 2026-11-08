@@ -2246,6 +2246,66 @@
         ]
       }
     },
+    "/v1/deals/{deal_id}/evidence": {
+      "get": {
+        "description": "Everything needed to decide a dispute without taking either side's word: the contract with both signatures, the seller's signed delivery, Trustee's own check of the delivered file, the buyer's attestation, the ruling, the plain-language summary, the signed receipt, the PayPal ids, and every ledger event with a re-check of its hash chain. Signed by Trustee's key over its canonical JSON.",
+        "operationId": "get_evidence_pack",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deal_id",
+            "required": true,
+            "schema": {
+              "title": "Deal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No deal with this id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Signed dispute evidence pack for a deal",
+        "tags": [
+          "Deals"
+        ]
+      }
+    },
     "/v1/deals/{deal_id}/receipt": {
       "get": {
         "description": "Issued when the deal is SETTLED or VOIDED: outcome, amount, parties, contract digest, intent-mandate digest, `human_present`, delivery sha256, every policy rule result, PayPal ids, the deal's ledger chain head, and Trustee's Ed25519 signature. Verify it offline with `python -m trustee.verify`, or with `POST /v1/receipts/verify`. The key is at `/.well-known/trustee-key.json`.",
