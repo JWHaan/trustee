@@ -71,7 +71,7 @@ uv run python -m trustee.arena.fixtures.run_honest partial --mode scripted
 ```
 
 The scenario is always runnable, but the arena lists it in `/api/scenarios` (and so in the UI) only with
-`ARENA_PARTIAL_SCENARIO=1`, because existing tests pin the list of five.
+`ARENA_PARTIAL_SCENARIO=1`, because `tests/test_api.py` pins the default list of six.
 
 ## 2. Reauthorization
 
