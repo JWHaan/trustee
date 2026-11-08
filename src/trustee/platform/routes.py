@@ -476,6 +476,22 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
             raise HTTPException(status_code=400, detail="deal_id in body does not match the path")
         return await call(service.on_delivery, deal_id, body)
 
+    @router.get(
+        "/v1/deals/{deal_id}/evidence",
+        operation_id="get_evidence_pack",
+        tags=["Deals"],
+        summary="Signed dispute evidence pack for a deal",
+        description=(
+            "Everything needed to decide a dispute without taking either side's word: the contract with both "
+            "signatures, the seller's signed delivery, Trustee's own check of the delivered file, the buyer's "
+            "attestation, the ruling, the plain-language summary, the signed receipt, the PayPal ids, and every "
+            "ledger event with a re-check of its hash chain. Signed by Trustee's key over its canonical JSON."
+        ),
+        responses=_errors({404: "No deal with this id."}),
+    )
+    async def evidence_pack(deal_id: str) -> JSONResponse:
+        return await call(service.evidence, deal_id)
+
     @router.post(
         "/v1/deals/{deal_id}/deliverable",
         operation_id="upload_deliverable",

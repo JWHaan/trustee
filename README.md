@@ -180,6 +180,7 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/deals/{id}/deliverable` | none (stored by sha256) | hand Trustee the file so it checks it itself |
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
 | `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
+| `GET /v1/deals/{id}/evidence` | none | signed dispute evidence pack: contract, delivery, Trustee's check, attestation, ruling, receipt, ledger |
 | `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
 | `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
 | `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
@@ -210,6 +211,13 @@ contract's checks on those exact bytes (hash, schema and row rules, the Channel3
 result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
 payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
 scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
+
+**Evidence for disputes.** Every deal has a signed evidence pack (`GET /v1/deals/{id}/evidence`, and a link on the
+arena page): the contract with both signatures, the seller's signed delivery, Trustee's own check of the file, the
+buyer's attestation, the ruling, the summary, the receipt, the PayPal ids and every ledger event with a re-check of the
+hash chain. `trustee.evidence.verify_evidence_pack` checks it offline; editing anything breaks the signature. Each
+PayPal order also carries `trustee:<contract sha256>` as its `custom_id`, so the PayPal record and Trustee's record
+find each other.
 
 **Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
 contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human

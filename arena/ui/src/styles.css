@@ -1707,3 +1707,12 @@ main {
     min-height: 44px;
   }
 }
+
+.v-ref {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+}
+.v-ref a {
+  color: var(--blue);
+}
