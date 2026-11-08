@@ -51,3 +51,8 @@ mypy_path = "src"
 packages = ["trustee"]
 warn_return_any = true
 disallow_untyped_defs = false
+
+# Optional extras (e2e: Playwright) are not installed in every environment; their modules are imported lazily.
+[[tool.mypy.overrides]]
+module = ["playwright.*"]
+ignore_missing_imports = true
