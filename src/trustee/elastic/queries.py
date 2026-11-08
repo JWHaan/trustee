@@ -70,3 +70,37 @@ def void_reasons_query(index: str) -> str:
 | KEEP @timestamp, deal_id, buyer, seller, amount, currency, detail
 | SORT @timestamp DESC
 | LIMIT ?limit"""
+
+
+# Ledger rows that mean a person must look at a deal: PayPal did something the deal cannot follow, storage refused a
+# money call, a buyer's claim contradicted the signed record, or a dispute is holding funds. Kept in one place so the
+# incidents tool and the docs agree on what "needs a human" means.
+INCIDENT_FILTER = (
+    'kind == "paypal_alert"'
+    ' OR (kind == "note" AND op IN ("intent_not_recorded", "evidence_check", "resume"))'
+    ' OR (kind == "ruling" AND decision == "uphold")'
+)
+
+
+def money_incidents_query(index: str) -> str:
+    """Rows that need a person, newest first. Parameters: ?since, ?limit."""
+    return f"""FROM {_index(index)}
+| WHERE @timestamp >= ?since AND ({INCIDENT_FILTER})
+| KEEP @timestamp, deal_id, kind, op, event, decision, buyer, seller, amount, currency, detail
+| SORT @timestamp DESC
+| LIMIT ?limit"""
+
+
+def contradicted_claims_query(index: str) -> str:
+    """Buyers whose hash-mismatch claims the signed record contradicted, most first, with their deal count and the
+    share of their deals affected. A buyer who keeps doing this is trying to keep files without paying.
+    Parameters: ?since, ?limit."""
+    return f"""FROM {_index(index)}
+| WHERE @timestamp >= ?since AND buyer IS NOT NULL
+| EVAL f_contradicted = CASE(kind == "note" AND op == "evidence_check", 1, 0)
+| STATS d_contradicted = MAX(f_contradicted) BY deal_id, buyer
+| STATS deals = COUNT(*), contradicted_claims = SUM(d_contradicted) BY buyer
+| WHERE contradicted_claims > 0
+| EVAL contradicted_share = ROUND(TO_DOUBLE(contradicted_claims) / deals, 3)
+| SORT contradicted_claims DESC
+| LIMIT ?limit"""
