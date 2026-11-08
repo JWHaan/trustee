@@ -1,120 +1,61 @@
-# Sponsor tools and how they help
+# Sponsor tools: what we keep and why
 
-The PayPal AI Hackathon lists ten optional sponsor and partner tools: AG Grid, APIMatic, Astropods, Bryntum, Channel3,
-Elastic, KERNEL, Postman, Render and Zapier. Trustee already uses eight of them. This page says what each one does
-for the project today and how it could help with the scaling and accountability plan in
-[SCALE_ARCHITECTURE.md](./SCALE_ARCHITECTURE.md) and [PAYPAL_SCALE.md](./PAYPAL_SCALE.md).
+The PayPal AI Hackathon lists ten optional sponsor and partner tools. Trustee keeps the ones that make the money path
+safer, more accountable or provably working against PayPal, and has dropped the rest.
 
-Prize amounts and stacking rules below come from third-party listings, which disagree in places. Check the official
-Devpost rules before planning around them.
+Prize amounts and stacking rules come from third-party listings, which disagree in places. Check the official Devpost
+rules before planning around them.
 
-## Summary
+## Focus
 
-| Tool | In the repo today | Helps with | Value for scale and accountability |
-|---|---|---|---|
-| **Render** | Hosts the arena (`render.yaml`), free plan, in-memory store | Running the target architecture: web service, background worker, cron, managed Postgres | **High** |
-| **Elastic** | Ledger shipping, reputation rules, A2A ledger analyst (`elastic/`) | Reconciliation, durability alerts, abuse detection, evidence search | **High** |
-| **KERNEL** | Not used | Automating the PayPal sandbox approval in an end-to-end test; web-based delivery checks | **High** for closing the "never run against real PayPal" gap |
-| **Zapier** | Human alerts (`alerts.py`), agents' back office over MCP (`network/backoffice.py`) | Human review of held disputes and storage incidents | Medium |
-| **Postman** | Collection with the honest deal, refusals and A2A (`postman/`) | Load and contract tests, scheduled monitors | Medium |
-| **AG Grid** | Ledger tape in the arena UI | An operator console: deals that need a person, reconciliation mismatches | Medium |
-| **Channel3** | Market check for price-feed deliveries (`channel3.py`, `pricefeed.py`) | The first neutral verifier in a verifier library | Medium |
-| **APIMatic** | SDK generation workflow (`.github/workflows/sdks.yml`) | SDKs that retry safely by `deal_id` and handle `503` and async opening | Low to medium |
-| **Astropods** | Hosts Northwind and Tidewater (`deploy/astropods/`) | Many independent agents as realistic load | Low to medium |
-| **Bryntum** | Not used | A timeline of every held authorization and its deadlines | Low for scale, useful for operators |
+| Tool | What it does for Trustee | Where |
+|---|---|---|
+| **Elastic** | Every ledger row ships to Elasticsearch. The ledger analyst answers "what needs a person?" (`trustee-money-incidents`) and "which buyers keep claiming mismatches the signed record contradicts?" (`trustee-contradicted-claims`), next to reputation, spend and void reasons. Kibana rules can page on the same query. | `elastic/`, `scripts/elastic_setup.py`, [ELASTIC.md](./ELASTIC.md) |
+| **KERNEL** | Remote browsers for agents. `trustee.sandbox_approver` approves a PayPal sandbox order in a browser, local Chromium or any remote browser over CDP such as a KERNEL one, so a real escrowed payment can run with no person. That closes the biggest gap: nothing had been run against the real PayPal sandbox. | `sandbox_approver.py`, `examples/sandbox_poc.py --auto-approve`, `.github/workflows/sandbox-e2e.yml` |
+| **Render** | Hosts the arena. Its paid services map onto the target design: web service (API), persistent disk or Postgres (deal store), background worker (money workers), cron (sweeper, reconciler). See [Render: making the demo durable](#render-making-the-demo-durable). | `render.yaml`, [DEPLOY.md](./DEPLOY.md) |
 
-## Details, in order of value
+## Kept, supporting
 
-### Render: run the design, not just the demo
-
-The deployed arena runs on Render's free plan with no disk, so `TRUSTEE_DB_PATH` is unset and the store is in
-memory (`render.yaml`). **The new write-ahead and resume protection therefore does nothing on the deployed demo:**
-a restart forgets every deal. Render's other service types map onto the target architecture almost one to one:
-
-| Target component | Render service |
+| Tool | Why it stays |
 |---|---|
-| API tier | web service (scale out to more instances) |
-| Deal store | managed Postgres (needs the Postgres port, step 5 of the order of work) |
-| Money workers draining the outbox | background worker |
-| Sweeper, reconciler, checkpoint publisher | cron jobs |
+| **AG Grid** | The ledger tape is the product's main view. Next: an operator grid of deals that need a person. |
+| **Zapier** | Human alerts (`dispute`, `paypal_alert`, `storage_unavailable`) reach a person. The Zapier MCP back office (agents booking invoices and bills) is optional and off by default. |
+| **Channel3** | The market check on price-feed deliveries is the first example of Trustee-side verification ([PAYPAL_SCALE.md](./PAYPAL_SCALE.md) §4.1). |
+| **Postman** | The collection runs the deal end to end; it is the starting point for the load test. |
 
-Cheapest useful step now: a paid instance with a persistent disk and `TRUSTEE_DB_PATH` set, so the demo is actually
-durable. Render's hosting-credit prize would pay for it.
+## Dropped
 
-### Elastic: where accountability becomes visible
+| Tool | Why |
+|---|---|
+| **Astropods** | Hosted Northwind and Tidewater containers, a remote arena mode and an AI Gateway fallback: extra surface that did not touch the money path, its scale or its accountability. The agents still run in the arena and standalone. |
+| **APIMatic** | Generated SDKs could not sign anything and needed a paid key to build. The OpenAPI file, the Postman collection and the Python `TrusteeClient` cover the same ground. |
+| **Bryntum** | Never added. A hold timeline would be an operator convenience, not a scaling tool. |
 
-The ledger already ships to Elasticsearch. Build on that:
+## KERNEL: how to use a remote browser
 
-- **Durability and reconciliation alerts.** Kibana alerting rules on `paypal_alert`, `storage_unavailable` and, once
-  the reconciler exists, `reconcile` rows. The goal from the design, "unreconciled money movements = 0", becomes a
-  dashboard and an alarm.
-- **Abuse detection.** Rejections per buyer whose claims the signed record contradicts (the new evidence check writes
-  a `note` row with `op: evidence_check`) are the signal for buyers who try to keep files without paying. A query or
-  an anomaly-detection job flags them **(confirm which Elastic tier includes anomaly detection)**.
-- **Evidence search.** When a PayPal dispute arrives after capture, find the deal's contract, delivery hash,
-  attestation and receipt in one query to build the evidence pack.
+`approve(..., cdp_url=...)` and `PAYPAL_E2E_CDP_URL` take the Chrome DevTools Protocol WebSocket URL of a running
+browser. Start a browser with KERNEL (its SDK or CLI returns that URL for each browser) and pass the URL; the
+approver connects, uses the browser's first context, and leaves the browser running for whoever started it. The KERNEL
+API calls themselves are not in this repository: its documentation could not be reached from the environment this was
+built in, so the integration point is the standard CDP URL rather than guessed SDK calls. The remote path is tested
+against a locally started Chromium over CDP.
 
-### KERNEL: get a real PayPal sandbox run into CI
+## Render: making the demo durable
 
-KERNEL provides cloud browsers for AI agents, with persisted profiles and Playwright support. The biggest open risk in
-this project is that no one has run the money path against the real PayPal sandbox; every test mocks PayPal. The one
-step that needs a person is the buyer approving the order at PayPal. A hosted browser can do that step in an
-end-to-end test: open the `approve_url`, log in as the sandbox buyer, approve, and let Trustee finish the hold and
-capture. That turns "untested against real PayPal" into a scheduled check. Use sandbox test accounts only.
+The deployed arena runs on the free plan, which has no disk, so `TRUSTEE_DB_PATH` is unset and the store is in memory.
+The write-before-money and crash-resume protections therefore do nothing on the deployed demo: a restart forgets every
+deal. Making it durable needs a paid instance with a persistent disk, which costs money, so `render.yaml` still uses
+the free plan. The change is:
 
-(This container also has Playwright and Chromium, so the same test can run locally first. KERNEL matters once it
-runs on a schedule in CI.)
+```yaml
+    plan: starter
+    disk:
+      name: trustee-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: TRUSTEE_DB_PATH
+        value: /var/data/trustee.db
+```
 
-A second use: a verifier for deliverables that are web pages or live APIs, which a browser can check.
-
-### Zapier: the human in the loop
-
-Several outcomes now deliberately stop for a person: a buyer's claim that the signed record contradicts (funds held,
-`DISPUTED`), a resume that cannot finish, storage refusing a money call. Zapier alerts already fire for each
-(`dispute`, `paypal_alert`, `storage_unavailable`). Next step: route `dispute` alerts to the operator with the deal
-link and the two hashes, and record the operator's decision through `POST /v1/deals/{id}/resolve`. Keep the operator
-token out of Zapier unless the Zap runs in a trusted account.
-
-### Postman: load and contract tests
-
-Step 7 of the order of work is a load test. The existing collection already drives a full deal. Postman can run it
-at volume and as a scheduled monitor **(confirm the performance-testing limits of the plan in use)**. Add requests
-for the new behaviour: a `503` when storage is down, and a retried `POST /v1/deals` that resumes rather than opening
-a second hold.
-
-### AG Grid: an operator console
-
-The ledger tape shows one run. Operators at scale need a different grid: every deal with `needs_attention`, every
-`DISPUTED` deal with its dispute deadline, every outbox row older than a minute. AG Grid's server-side or infinite row
-models page through large tables **(server-side row model is AG Grid Enterprise)**. AG Grid also has the largest
-sponsor prizes.
-
-### Channel3: the first verifier
-
-`pricefeed.py` already checks a delivery against live market data. It is the model for the verifier library in
-[PAYPAL_SCALE.md](./PAYPAL_SCALE.md) §4.1: a named, versioned check that Trustee runs itself, so the buyer's verdict
-stops being the only evidence.
-
-### APIMatic: SDKs that do the safe thing
-
-Integrators will call the API from their own code. Generated SDKs can build in the behaviour that keeps money safe:
-retry `POST /v1/deals` with the same `deal_id` after a timeout or `503`, and never invent a new id. Signing stays in
-`trustee.client`, as `docs/SDKS.md` describes.
-
-### Astropods: realistic load
-
-Hosted Northwind and Tidewater agents can be multiplied into many buyer and seller pairs for the load test, so it
-exercises real agents with real keys rather than one script.
-
-### Bryntum: a hold timeline
-
-Bryntum's scheduler and Gantt components could show every held authorization on a time axis: contract deadline,
-PayPal's 3-day honor period, dispute window and the 29-day expiry. That makes "no hold is about to strand" visible at a
-glance. It is an operator convenience, not a scaling tool.
-
-## Recommendation
-
-For the scaling and accountability goals: **Render** (make the deployed store durable, then host the worker and cron
-pieces), **Elastic** (reconciliation and abuse alerts) and **KERNEL** (a real sandbox run in CI). For the hackathon
-prizes, AG Grid offers the most, and the listings conflict on whether more than one sponsor prize can be won, so pick
-one sponsor prize to aim for.
+Render's hosting-credit prize would cover it.
