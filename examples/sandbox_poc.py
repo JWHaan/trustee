@@ -7,9 +7,12 @@ directly through the same `PayPalClient` Trustee uses, with no server involved:
     python examples/sandbox_poc.py --settle           # ... then capture to the seller
     python examples/sandbox_poc.py --refund           # ... then void (buyer keeps funds)
     python examples/sandbox_poc.py --dry-run          # no network, no credentials: shows the same steps
+    python examples/sandbox_poc.py --settle --auto-approve   # a browser approves as the sandbox buyer
 
-It prints the approve URL. Open it, log in with a SANDBOX buyer account and approve. It refuses to run
-with PAYPAL_ENV=live and never prints credentials or tokens.
+It prints the approve URL. Open it, log in with a SANDBOX buyer account and approve. Or pass --auto-approve: a
+browser does it with PAYPAL_SANDBOX_BUYER_EMAIL / PAYPAL_SANDBOX_BUYER_PASSWORD (needs `uv sync --extra e2e`).
+Set PAYPAL_E2E_CDP_URL to use a remote browser, such as one started by KERNEL, instead of local Chromium. It
+refuses to run with PAYPAL_ENV=live and never prints credentials or tokens.
 """
 
 from __future__ import annotations
@@ -61,6 +64,31 @@ def wait_for_approval(client: PayPalClient, order_id: str, timeout: float, poll:
     return False
 
 
+def auto_approve(client: PayPalClient, approve_url: str, timeout: float) -> bool:
+    """Approve the order in a browser as the sandbox buyer. Prints the steps taken, never the password."""
+    from trustee.sandbox_approver import ApprovalError, approve
+
+    email = os.environ.get("PAYPAL_SANDBOX_BUYER_EMAIL", "")
+    password = os.environ.get("PAYPAL_SANDBOX_BUYER_PASSWORD", "")
+    try:
+        outcome = approve(
+            approve_url,
+            email,
+            password,
+            done_prefix=client.return_url or "",
+            cdp_url=os.environ.get("PAYPAL_E2E_CDP_URL") or None,
+            timeout=timeout,
+        )
+    except ApprovalError as exc:
+        print(f"browser approval not attempted: {exc}", file=sys.stderr)
+        return False
+    for step in outcome.steps:
+        print(f"  browser: {step}")
+    if not outcome.approved:
+        print(f"  browser: {outcome.reason}", file=sys.stderr)
+    return outcome.approved
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--amount", default="1.00", help="amount in USD (sandbox money)")
@@ -71,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timeout", type=float, default=300.0, help="seconds to wait for approval")
     parser.add_argument("--dry-run", action="store_true", help="no network: exercise the same steps locally")
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="approve in a browser as the sandbox buyer (PAYPAL_SANDBOX_BUYER_EMAIL / _PASSWORD, extra: e2e)",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--settle", action="store_true", help="capture the hold to the seller")
     group.add_argument("--refund", action="store_true", help="void the hold (buyer keeps funds)")
@@ -93,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
             print("(dry-run) funds held without payer approval")
         else:
             print(f"approve at: {order.approve_url}")
+            if args.auto_approve and not auto_approve(client, order.approve_url or "", args.timeout):
+                print("browser approval did not finish; stopping. Nothing was held.")
+                return 1
             if not wait_for_approval(client, order.order_id, args.timeout, poll):
                 print("no approval; stopping. Nothing was held.")
                 return 1

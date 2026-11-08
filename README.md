@@ -223,7 +223,14 @@ Proof of concept (sandbox only; refuses `PAYPAL_ENV=live`):
 ```bash
 python examples/sandbox_poc.py --settle      # or --refund; open the printed approve URL as a sandbox buyer
 python examples/sandbox_poc.py --dry-run     # same steps with no network or credentials
+python examples/sandbox_poc.py --settle --auto-approve   # a browser approves as the sandbox buyer
 ```
+
+`--auto-approve` (`uv sync --extra e2e`) logs in as `PAYPAL_SANDBOX_BUYER_EMAIL` / `PAYPAL_SANDBOX_BUYER_PASSWORD` in
+local Chromium, or in a remote browser such as one started by KERNEL when `PAYPAL_E2E_CDP_URL` is set, and approves.
+Success means PayPal redirected to the return URL. The `sandbox-e2e` workflow runs this weekly once the sandbox secrets
+are set. The selectors for PayPal's pages are a best guess, not yet checked against the live sandbox; override them
+with `PAYPAL_E2E_SELECTORS` (`src/trustee/sandbox_approver.py`).
 
 ### A2A: JSON-RPC and push notifications
 
@@ -344,6 +351,7 @@ src/trustee/
   funding.py         vaulted PayPal funding sources behind opaque funding_refs
   receipts.py        signed settlement receipts and the Trustee signing key
   verify.py          `python -m trustee.verify`: check a receipt offline
+  sandbox_approver.py  approve a PayPal sandbox order in a browser (local Chromium or remote over CDP)
   state.py           deal state machine (guarded, idempotent, transition hook)
   paypal.py          PayPal adapter (authorize/capture/void/reauthorize, approval flow, vault, webhooks, dry-run)
   partial.py         pro-rata settlement math (pure Decimal, no I/O, no LLM)
