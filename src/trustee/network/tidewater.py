@@ -48,6 +48,7 @@ from ..ledger import Ledger
 from ..llm import LLM
 from ..mandate import Mandate
 from ..paypal import sandbox_emails
+from ..platform.wire import upload_signing_bytes
 from ..protocol import Accept, Contract, Counter, Delivery, GoodSpec
 from .backoffice import Backoffice, BookingResult
 from .common import (
@@ -444,7 +445,10 @@ class Tidewater(NetworkAgent):
             resp = self.http.post(
                 f"{self.trustee_url}/v1/deals/{deal_id}/deliverable",
                 content=payload,
-                headers={"Content-Type": "application/octet-stream"},
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "X-Trustee-Signature": self.identity.agent_key.sign(upload_signing_bytes(deal_id, payload)),
+                },
             )
             note = f"file handed to Trustee ({resp.status_code})"
         except httpx.HTTPError as exc:

@@ -7,6 +7,7 @@ dict, and signatures are urlsafe-b64 Ed25519 (see `trustee.identity`).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import fields
 from datetime import datetime
@@ -208,3 +209,8 @@ class ReceiptVerifyIn(BaseModel):
 def download_signing_bytes(deal_id: str) -> bytes:
     """What a buyer signs to download the delivered file from Trustee."""
     return f"trustee-download:{deal_id}".encode()
+
+
+def upload_signing_bytes(deal_id: str, data: bytes) -> bytes:
+    """What a seller signs to hand Trustee the delivered file: the deal and the sha256 of the exact bytes sent."""
+    return f"trustee-upload:{deal_id}:{hashlib.sha256(data).hexdigest()}".encode()

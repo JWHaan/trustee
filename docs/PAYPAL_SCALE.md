@@ -96,7 +96,7 @@ Fix it in two steps:
    If nobody acts within the dispute window, the existing rule for an upheld dispute applies and the seller is
    paid. Step 2 removes the need to choose.
 2. **Done: Trustee verifies the delivery.** The seller uploads the file to Trustee
-   (`POST /v1/deals/{id}/deliverable`), which stores it under its sha256 and runs the contract's checks itself: the
+   (`POST /v1/deals/{id}/deliverable`, signed by the seller), which stores it under its sha256 and runs the contract's checks itself: the
    hash, the schema and row rules, the Channel3 market check (`src/trustee/verification.py`). A failed check refunds
    the buyer on Trustee's own finding; a passed check with a buyer rejection holds the money for a person; for
    pro-rata contracts Trustee's count of valid items sets the amount. The buyer downloads the file from Trustee once
