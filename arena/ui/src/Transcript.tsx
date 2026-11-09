@@ -155,12 +155,12 @@ export function Transcript({ rows, running, snap, footer }: Props) {
   // Follow the tape; rAF because the new row is not laid out yet when the effect runs.
   useEffect(() => {
     const feed = feedRef.current;
-    if (!feed) return;
+    if (!feed || !running) return;
     const frame = requestAnimationFrame(() => {
       feed.scrollTop = feed.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [visible.length, footer]);
+  }, [visible.length, footer, running]);
 
   if (!visible.length) {
     return (

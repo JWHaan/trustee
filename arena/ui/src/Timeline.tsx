@@ -1,4 +1,4 @@
-import { Check, Minus, Undo2, X } from "lucide-react";
+import { Check, Minus, Undo2, UserCheck, X } from "lucide-react";
 import type { Row, Snapshot } from "./api";
 import { deriveTimeline, type StepStatus } from "./derive";
 
@@ -6,6 +6,8 @@ function Mark({ status, n }: { status: StepStatus; n: number }) {
   switch (status) {
     case "done":
       return <Check size={14} strokeWidth={3} aria-hidden="true" />;
+    case "person":
+      return <UserCheck size={14} strokeWidth={2.5} aria-hidden="true" />;
     case "failed":
       return <X size={14} strokeWidth={3} aria-hidden="true" />;
     case "refund":
@@ -21,6 +23,7 @@ const SPOKEN: Record<StepStatus, string> = {
   todo: "pending",
   active: "in progress",
   done: "done",
+  person: "passed only with a person's approval",
   failed: "failed",
   refund: "refunded",
   skipped: "not reached",

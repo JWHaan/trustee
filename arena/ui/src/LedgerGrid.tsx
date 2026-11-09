@@ -164,6 +164,14 @@ export function LedgerGrid({ rows }: { rows: Row[] }) {
     api.setColumnsVisible([...hidden], false);
   }, [ready, width, hasLink]);
 
+  // A new run starts unfiltered: a kind or search left over from the last run could hide every new row.
+  useEffect(() => {
+    if (rows.length === 0) {
+      setKind("all");
+      setSearch("");
+    }
+  }, [rows.length]);
+
   // External filter: AG Grid re-evaluates it only when told the filter state changed.
   useEffect(() => {
     gridRef.current?.api?.onFilterChanged();

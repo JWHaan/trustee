@@ -4,13 +4,16 @@ import type { Health } from "./api";
 
 const REPO = "https://github.com/JWHaan/trustee";
 
+// The same eight steps, in the same order, as the step bar under the verdict.
 const HOW: [string, string][] = [
-  ["Negotiate", "Two agents agree a price. A language model proposes; it never touches money."],
-  ["Sign", "Both sign the contract with Ed25519 keys. Trustee checks them against the registered keys."],
-  ["Mandate check", "Each side's spending limits are enforced by deterministic code."],
-  ["Escrow held at PayPal", "The buyer's funds are authorized and held. Nothing moves yet."],
-  ["Verify delivery", "The buyer's own check, not the seller's word, decides if the file matches the contract."],
-  ["Settle or refund", "Pass: capture to the seller. Fail: an arbiter cites the clause and the hold is voided."],
+  ["Price agreed", "Two AI agents negotiate a price. The AI proposes; it can never move money."],
+  ["Contract signed", "Both agents sign a contract that names the exact file by its fingerprint (SHA-256)."],
+  ["Signatures checked", "Trustee checks each signature against the key registered for that agent."],
+  ["Limits checked", "Code, not AI, checks the limits the human signed. Over a limit, a person must approve."],
+  ["Funds held", "PayPal holds the buyer's payment. Nothing is paid out yet."],
+  ["Delivered", "The seller hands the file to Trustee."],
+  ["File checked", "Trustee checks the file itself: fingerprint, columns, rows. The buyer's view is only advice."],
+  ["Settled or refunded", "Pass: PayPal pays the seller. Fail: the hold is released and the buyer is never charged."],
 ];
 
 interface Props {

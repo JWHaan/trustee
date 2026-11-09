@@ -439,6 +439,18 @@ select:disabled {
 .tstep.active .tlabel {
   color: var(--gold);
 }
+.tstep.person .bullet {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #17120a;
+}
+.tstep.person .tlabel,
+.tstep.person .tdetail {
+  color: var(--gold);
+}
+.tstep.person:not(:last-child)::after {
+  background: var(--gold);
+}
 .tstep.failed .bullet {
   background: var(--red);
   border-color: var(--red);
@@ -861,7 +873,7 @@ main {
   color: var(--dim);
   font-weight: 500;
 }
-.chip:hover:not(:disabled) {
+.chip:not(.on):hover:not(:disabled) {
   border-color: #3a4456;
   background: transparent;
 }
@@ -1391,7 +1403,7 @@ main {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid var(--line);
+  border: 2px solid #56657f;
   background: var(--bg);
   margin-bottom: var(--s2);
 }
@@ -1546,9 +1558,14 @@ main {
 .check-list .rnote {
   color: var(--dim);
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.check-list li.adv svg {
+  color: var(--dim);
+}
+.check-list li.adv .rname {
+  color: var(--muted);
 }
 .linkish {
   background: none;
@@ -1715,4 +1732,129 @@ main {
 }
 .v-ref a {
   color: var(--blue);
+}
+
+/* ------------------------------------------------------- how Trustee knows */
+
+.proof {
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line-soft);
+}
+.proof h3 {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.proof-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3) var(--s5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.proof-item {
+  --mark: var(--green);
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: start;
+}
+.proof-item.no {
+  --mark: var(--red);
+}
+.proof-item.person {
+  --mark: var(--gold);
+}
+.proof-item.skip {
+  --mark: var(--dim);
+}
+.proof-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  color: var(--mark);
+  background: color-mix(in srgb, var(--mark) 16%, transparent);
+}
+.proof-body {
+  min-width: 0;
+}
+.proof-q {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.proof-a {
+  margin: 2px 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.proof-item.skip .proof-a {
+  color: var(--muted);
+}
+.proof-raw {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  margin: var(--s2) 0 0;
+  font-size: 13px;
+}
+.proof-raw div {
+  display: flex;
+  gap: var(--s2);
+  min-width: 0;
+}
+.proof-raw dt {
+  color: var(--dim);
+}
+.proof-raw dd {
+  margin: 0;
+  font-family: var(--mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.proof-raw .bad dd {
+  color: var(--red);
+}
+.decider {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  margin: var(--s4) 0 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--muted);
+  max-width: 80ch;
+}
+.decider svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--trustee);
+}
+.decider.ai svg {
+  color: var(--arbiter);
+}
+.decider b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+@media (max-width: 720px) {
+  .proof-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The hold after the money has left it: a gold ring says it was held there first. */
+.ml-stop.hold.was-held:not(.here) .ml-dot {
+  border-color: var(--gold);
 }

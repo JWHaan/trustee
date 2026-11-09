@@ -2,6 +2,7 @@ import { Check, CircleDashed, Hourglass, ShieldX, Undo2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Row, Snapshot, Summary } from "./api";
 import { ApprovalBanner } from "./Approval";
+import { Decider, Proof } from "./Proof";
 import { deriveMoney, deriveTimeline } from "./derive";
 import { money } from "./describe";
 import { Timeline } from "./Timeline";
@@ -40,6 +41,7 @@ function finishedParties(
   s: Summary,
   buyer: string,
   seller: string,
+  wasHeld: boolean,
 ): { parties: Party[]; spot: Spot; split: boolean; kind: MoneyKind } {
   const m = s.money;
   const paid = Number(m.paid_to_seller) > 0;
@@ -50,11 +52,13 @@ function finishedParties(
   const holdLine = held
     ? `holding ${amt(m.held, c)}`
     : paid && back
-      ? "split between both"
+      ? "held, then split between both"
       : paid
-        ? "paid out to the seller"
+        ? "held, then paid out"
         : back
-          ? "released to the buyer"
+          ? wasHeld
+            ? "held, then released"
+            : "released to the buyer"
           : "never held";
   const sellerLine = paid ? `received ${amt(m.paid_to_seller, c)}` : "not paid";
   const spot: Spot = held ? "hold" : paid ? "seller" : "buyer";
@@ -131,7 +135,10 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
     headline = "Pick a deal above to watch where the money goes.";
   }
 
-  const flow = summary ? finishedParties(summary, buyer, seller) : liveParties(rows, snap, running, buyer, seller);
+  const wasHeld = Boolean(snap?.escrow?.authorization_id);
+  const flow = summary
+    ? finishedParties(summary, buyer, seller, wasHeld)
+    : liveParties(rows, snap, running, buyer, seller);
   const ref = snap?.escrow?.order_id;
 
   return (
@@ -162,7 +169,10 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
 
       <ol className={`ml spot-${flow.spot} money-${flow.kind} ${flow.split ? "split" : ""}`} aria-label="Where the money is">
         {flow.parties.map((p) => (
-          <li key={p.key} className={`ml-stop ${p.key} ${flow.spot === p.key ? "here" : ""}`}>
+          <li
+            key={p.key}
+            className={`ml-stop ${p.key} ${flow.spot === p.key ? "here" : ""} ${summary && wasHeld ? "was-held" : ""}`}
+          >
             <span className="ml-dot" aria-hidden="true" />
             <span className="ml-name">{p.name}</span>
             <span className="ml-line">{p.line}</span>
@@ -174,6 +184,9 @@ export function Verdict({ rows, snap, running, scenario, approving }: Props) {
       {next ? <p className="v-next">{next}</p> : null}
 
       <Timeline rows={rows} snap={snap} running={running} />
+
+      {summary && snap ? <Proof rows={rows} snap={snap} /> : null}
+      {running || snap ? <Decider snap={summary ? snap : null} /> : null}
 
       {ref || (snap && !running) ? (
         <p className="v-ref">

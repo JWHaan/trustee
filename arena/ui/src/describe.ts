@@ -64,7 +64,7 @@ export function describe(row: Row): Line {
 
   if (row.kind === "run") {
     if (row.event === "run_started") return { headline: "run started", detail: note };
-    if (row.event === "run_finished") return { headline: `run finished: ${row.price ? money(row.price) : ""}`, detail: note };
+    if (row.event === "run_finished") return { headline: "run finished", detail: note };
     if (row.event === "cap_reached") return { headline: "move cap reached", detail: note, price };
     return { headline: row.event.replace(/_/g, " "), detail: note };
   }
@@ -163,7 +163,7 @@ export function describe(row: Row): Line {
   }
 
   if (row.kind === "receipt") {
-    const how = row.authority === "intent_mandate" ? "paid under the intent mandate" : "approved by a human";
+    const how = row.authority === "intent_mandate" ? "authorized by the human's signed limits" : "approved by a person";
     return { headline: "signed receipt issued", detail: `${how} · ${note}` };
   }
 

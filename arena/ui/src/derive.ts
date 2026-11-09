@@ -6,7 +6,8 @@ import { pendingApproval } from "./describe";
  * the tape and the transcript read, so the four views cannot disagree about where a deal is.
  */
 
-export type StepStatus = "todo" | "active" | "done" | "failed" | "refund" | "skipped";
+/** person: passed only because a person approved it (a limit was broken, so it stepped up). */
+export type StepStatus = "todo" | "active" | "done" | "person" | "failed" | "refund" | "skipped";
 
 export interface Step {
   key: string;
@@ -82,6 +83,10 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
   const forged = rejection !== undefined || outcome === "rejected_identity";
 
   const policy = derivePolicy(rows);
+  // The same count the Checks tab and the evidence panel show: every signed limit plus the both-sides mandate check.
+  const limitChecks = policy.rules.length + rows.filter((r) => r.kind === "mandate" && r.note).length;
+  const limitPassed = policy.passed + rows.filter((r) => r.kind === "mandate" && r.note.startsWith("mandates OK")).length;
+  const steppedUp = policy.authority === "stepup";
   const finalLabel = forged ? "Rejected" : settled ? "Settled" : voided ? "Refunded" : "Settled or refunded";
   const steps: Step[] = [
     {
@@ -105,12 +110,14 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
     {
       key: "mandate",
       label: "Limits checked",
-      status: mandate ? (mandateOk ? "done" : "failed") : "todo",
+      status: mandate ? (mandateOk ? (steppedUp ? "person" : "done") : "failed") : "todo",
       detail: mandate
         ? mandateOk
-          ? policy.rules.length
-            ? `${policy.passed}/${policy.rules.length} rules pass`
-            : "both within limits"
+          ? steppedUp
+            ? "over a limit"
+            : policy.rules.length
+              ? `${limitPassed}/${limitChecks} pass`
+              : "both within limits"
           : "blocked"
         : "",
     },
@@ -127,9 +134,9 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
           ? "awaiting approval"
           : authorize
             ? policy.authority === "stepup"
-              ? "outside the mandate"
+              ? "after a person's OK"
               : policy.authority === "intent"
-                ? "no human click"
+                ? "no approval needed"
                 : "at PayPal"
             : "",
     },
@@ -137,7 +144,7 @@ export function deriveTimeline(rows: Row[], snap: Snapshot | null, running: bool
       key: "delivered",
       label: "Delivered",
       status: delivered ? "done" : "todo",
-      detail: delivery?.sha ? `sha ${delivery.sha.slice(0, 8)}` : "",
+      detail: delivered ? "file received" : "",
     },
     {
       key: "verified",
@@ -234,6 +241,8 @@ export interface CheckItem {
   ok: boolean;
   label: string;
   detail: string;
+  /** Shown for the record but not counted: the buyer's own verdict once Trustee has checked the file itself. */
+  advisory?: boolean;
 }
 
 export interface CheckGroup {
@@ -306,7 +315,15 @@ export function deriveChecks(rows: Row[], ruleLabel: (rule: string) => string): 
   if (verdicts.length) {
     const last = verdicts[verdicts.length - 1];
     const ok = last.verdict.toLowerCase() !== "reject";
-    delivery.push({ id: last.id, ok, label: ok ? "The buyer accepted the file" : "The buyer rejected the file", detail: last.note });
+    // Once Trustee has checked the file itself, the buyer's verdict is advice: shown, never counted as a pass or a fail.
+    const advisory = own !== undefined;
+    delivery.push({
+      id: last.id,
+      ok,
+      advisory,
+      label: `${ok ? "The buyer accepted the file" : "The buyer rejected the file"}${advisory ? " (advice only)" : ""}`,
+      detail: last.note,
+    });
   }
   if (delivery.length) groups.push({ title: "Delivery", items: delivery });
   return groups;

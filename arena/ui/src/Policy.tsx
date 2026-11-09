@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Minus, X } from "lucide-react";
 import type { Row } from "./api";
 import { deriveChecks, derivePolicy, type CheckItem } from "./derive";
 
@@ -22,13 +22,19 @@ const LABEL: Record<string, string> = {
 
 function Line({ item }: { item: CheckItem }) {
   return (
-    <li className={item.ok ? "ok" : "no"}>
-      {item.ok ? <Check size={14} strokeWidth={3} aria-hidden="true" /> : <X size={14} strokeWidth={3} aria-hidden="true" />}
+    <li className={item.advisory ? "adv" : item.ok ? "ok" : "no"}>
+      {item.advisory ? (
+        <Minus size={14} strokeWidth={3} aria-hidden="true" />
+      ) : item.ok ? (
+        <Check size={14} strokeWidth={3} aria-hidden="true" />
+      ) : (
+        <X size={14} strokeWidth={3} aria-hidden="true" />
+      )}
       <span className="rname">{item.label}</span>
       <span className="rnote" title={item.detail}>
         {item.detail}
       </span>
-      <span className="sr-only">{item.ok ? "passed" : "failed"}</span>
+      <span className="sr-only">{item.advisory ? "advice only, not counted" : item.ok ? "passed" : "failed"}</span>
     </li>
   );
 }
@@ -37,7 +43,9 @@ export const ruleLabel = (rule: string) => LABEL[rule] ?? rule;
 
 /** How many checks failed, for the tab label; null before anything was checked. */
 export function failedChecks(rows: Row[]): { failed: number; total: number } | null {
-  const items = deriveChecks(rows, ruleLabel).flatMap((g) => g.items);
+  const items = deriveChecks(rows, ruleLabel)
+    .flatMap((g) => g.items)
+    .filter((i) => !i.advisory);
   return items.length ? { failed: items.filter((i) => !i.ok).length, total: items.length } : null;
 }
 
@@ -56,8 +64,9 @@ export function PolicyChecklist({ rows }: { rows: Row[] }) {
     <div className="checks">
       {consent ? <p className="checks-consent">{consent.note}</p> : null}
       {groups.map((g) => {
-        const failed = g.items.filter((i) => !i.ok);
-        const passed = g.items.filter((i) => i.ok);
+        const failed = g.items.filter((i) => !i.ok && !i.advisory);
+        const passed = g.items.filter((i) => i.ok && !i.advisory);
+        const advice = g.items.filter((i) => i.advisory);
         const shown = open[g.title];
         return (
           <div key={g.title} className="checks-group">
@@ -92,6 +101,13 @@ export function PolicyChecklist({ rows }: { rows: Row[] }) {
                   </ul>
                 ) : null}
               </>
+            ) : null}
+            {advice.length ? (
+              <ul className="check-list">
+                {advice.map((i) => (
+                  <Line key={i.id} item={i} />
+                ))}
+              </ul>
             ) : null}
           </div>
         );

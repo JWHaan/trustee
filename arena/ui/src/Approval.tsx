@@ -28,8 +28,11 @@ export function ApprovalBanner({ row }: { row: Row }) {
   const href = safeLink(row.link);
 
   return (
-    <div className="approval" role="status">
-      <div className="approval-head">waiting for buyer approval{limit ? ` — ${clock(left)}` : ""}</div>
+    <div className="approval">
+      <div className="approval-head">
+        <span role="status">Waiting for the buyer to approve the payment in PayPal</span>
+        {limit ? <span aria-hidden="true"> — {clock(left)}</span> : null}
+      </div>
       <p>
         This is the <b>PayPal sandbox</b>: test accounts, fake money. Trustee holds nothing until the buyer approves
         the payment in PayPal.
