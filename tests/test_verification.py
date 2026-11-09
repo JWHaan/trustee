@@ -19,7 +19,7 @@ from trustee.identity import AgentKey
 from trustee.ledger import Ledger
 from trustee.mandate import Mandate
 from trustee.paypal import PayPalClient
-from trustee.platform.wire import download_signing_bytes
+from trustee.platform.wire import download_signing_bytes, upload_signing_bytes
 from trustee.protocol import Attest, Contract, Delivery, GoodSpec, PartialTerms
 from trustee.verification import BlobError, BlobStore
 
@@ -79,10 +79,12 @@ class DataWorld(World):
         )
         return c.sign("buyer", self.keys["buyer"]).sign("seller", self.keys["seller"])
 
-    def upload(self, data: bytes, deal_id: str = "deal-1"):
-        return self.http.post(
-            f"/v1/deals/{deal_id}/deliverable", content=data, headers={"Content-Type": "application/octet-stream"}
-        )
+    def upload(self, data: bytes, deal_id: str = "deal-1", signer: str | None = "seller"):
+        """Hand Trustee a file, signed by `signer`'s agent key (the seller by default; None sends no signature)."""
+        headers = {"Content-Type": "application/octet-stream"}
+        if signer is not None:
+            headers["X-Trustee-Signature"] = self.keys[signer].sign(upload_signing_bytes(deal_id, data))
+        return self.http.post(f"/v1/deals/{deal_id}/deliverable", content=data, headers=headers)
 
     def deliver_hash(self, content_hash: str, deal_id: str = "deal-1"):
         d = Delivery(sender="seller", deal_id=deal_id, deliverable_ref="returns-2026q3.csv", content_hash=content_hash)
@@ -131,6 +133,21 @@ def test_a_seller_who_signs_a_hash_for_a_file_it_did_not_hand_over_is_caught(w: 
     assert "did not hand over" in body["ruling"]["reasoning"]
 
 
+def test_a_buyer_cannot_frame_a_seller_who_delivered_directly(w: DataWorld):
+    """The buyer uploads junk for the deal; the honest seller sends the right file directly and signs its hash.
+
+    Before, any upload counted as the seller's, so Trustee read the junk as "the seller signed a hash for a file it did
+    not hand over", refunded the buyer and the buyer kept the real file. Only the seller's signed upload counts now."""
+    w.open(w.data_contract())
+    by_buyer = w.upload(JUNK_FILE, signer="buyer")
+    unsigned = w.upload(JUNK_FILE, signer=None)
+    w.deliver_hash(sha(GOOD_FILE))
+    body = w.attest_with("reject", {}).json()
+    assert body["state"] != "VOIDED" and w.paypal.calls["void"] == 0
+    assert "verification" not in body  # Trustee holds no file from the seller, so the buyer's junk proves nothing
+    assert by_buyer.status_code == 401 and unsigned.status_code == 401
+
+
 def test_trustees_count_sets_a_partial_payment_not_the_buyers(w: DataWorld):
     """The partial file has 4,500 valid rows of 5,000. A buyer reporting 2,600 would have paid 52%; it pays 90%."""
     w.open(w.data_contract(PARTIAL_FILE, partial=True))
@@ -169,6 +186,12 @@ def test_without_an_upload_the_buyers_check_still_works(w: DataWorld):
 def test_upload_rules(w: DataWorld):
     assert w.upload(GOOD_FILE, deal_id="nope").status_code == 404
     w.open(w.data_contract())
+    assert w.upload(GOOD_FILE, signer=None).status_code == 401
+    assert w.upload(GOOD_FILE, signer="buyer").status_code == 401
+    forged = w.keys["seller"].sign(upload_signing_bytes("deal-1", JUNK_FILE))  # signed for other bytes
+    r = w.http.post("/v1/deals/deal-1/deliverable", content=GOOD_FILE, headers={"X-Trustee-Signature": forged})
+    assert r.status_code == 401
+    assert w.service.blobs.get(sha(GOOD_FILE)) is None  # refused uploads store nothing
     assert w.upload(b"").status_code == 422
     assert w.upload(GOOD_FILE).json()["sha256"] == sha(GOOD_FILE)
     w.deliver_hash(sha(GOOD_FILE))
@@ -180,8 +203,10 @@ def test_blob_store_limits(tmp_path: Path):
     store = BlobStore(tmp_path, max_bytes=10)
     with pytest.raises(BlobError):
         store.put(b"x" * 11)
-    digest = store.put(b"hello", "d1")
-    assert store.get(digest) == b"hello" and store.uploaded_for("d1") == {digest}
+    digest = store.put(b"hello", seller_upload_for="d1")
+    assert store.get(digest) == b"hello" and store.seller_uploads("d1") == {digest}
+    store.put(b"other")  # stored, but not the seller's upload for any deal
+    assert store.seller_uploads("d1") == {digest}
     assert store.get("../../etc/passwd") is None
 
 

@@ -222,6 +222,9 @@ def test_full_purchase_over_a2a_settles_with_one_capture(net: Net) -> None:
     # the attestation was Northwind's own check of those bytes
     assert purchase.attest is not None and purchase.attest["verdict"] == "accept"
     assert purchase.attest["evidence"]["sha256_check"] == "match"
+    # Tidewater handed Trustee the file with its signature, so Trustee checked the bytes itself
+    assert [h.note for h in net.hops_of("tidewater", skill="upload-deliverable")] == ["file handed to Trustee (201)"]
+    assert net.deal()["verification"]["passed"] is True
 
 
 def test_every_hop_is_reported_in_order(net: Net) -> None:

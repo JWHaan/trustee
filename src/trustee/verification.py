@@ -12,8 +12,10 @@ The result is a `Verification`. Trustee records it on the ledger, prefers it ove
 and the buyer gets the file from Trustee only once the payment has settled (`DealService.download_deliverable`).
 
 Files are stored by their sha256 (`BlobStore`), so a stored file is identified by its content. A seller's signed
-`Delivery` names the hash; Trustee only ever checks the bytes under that hash. A seller who uploaded something for the
-deal but signs a different hash has made a false claim, and the verification says so.
+`Delivery` names the hash; Trustee only ever checks the bytes under that hash. A seller who handed Trustee a file for
+the deal but signs a different hash has made a false claim, and the verification says so. Only files the seller itself
+handed over count for that rule (the platform requires the seller's signature on the upload); anyone else's file for
+the deal is never evidence against the seller.
 
 No checker imports or runs anything from the file: they read it as data.
 """
@@ -46,7 +48,7 @@ class BlobError(ValueError):
 
 
 class BlobStore:
-    """Delivered files, stored under their sha256, plus which hashes were uploaded for which deal."""
+    """Delivered files, stored under their sha256, plus which hashes each deal's seller handed over."""
 
     def __init__(self, root: Path | str | None = None, max_bytes: int = MAX_DELIVERABLE_BYTES):
         if root is None:
@@ -54,10 +56,12 @@ class BlobStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_bytes = max_bytes
-        self._by_deal: dict[str, set[str]] = {}
+        self._seller_uploads: dict[str, set[str]] = {}  # deal_id -> hashes that deal's seller handed over
         self._lock = threading.Lock()
 
-    def put(self, data: bytes, deal_id: str | None = None) -> str:
+    def put(self, data: bytes, seller_upload_for: str | None = None) -> str:
+        """Store a file under its sha256. Pass `seller_upload_for` only when the deal's seller itself handed the file
+        over (authenticated by its signature, or in-process): those files are evidence against the seller's delivery."""
         if not data:
             raise BlobError("the file is empty")
         if len(data) > self.max_bytes:
@@ -68,9 +72,9 @@ class BlobStore:
             tmp = path.with_suffix(".part")
             tmp.write_bytes(data)
             tmp.replace(path)
-        if deal_id:
+        if seller_upload_for:
             with self._lock:
-                self._by_deal.setdefault(deal_id, set()).add(digest)
+                self._seller_uploads.setdefault(seller_upload_for, set()).add(digest)
         return digest
 
     def path(self, digest: str) -> Path:
@@ -85,9 +89,10 @@ class BlobStore:
             return None
         return path.read_bytes() if path.is_file() else None
 
-    def uploaded_for(self, deal_id: str) -> set[str]:
+    def seller_uploads(self, deal_id: str) -> set[str]:
+        """The hashes of the files this deal's seller handed over. Nobody else's upload is in here."""
         with self._lock:
-            return set(self._by_deal.get(deal_id, set()))
+            return set(self._seller_uploads.get(deal_id, set()))
 
 
 @dataclass
@@ -157,10 +162,11 @@ class DeliveryVerifier:
         signed = delivery.content_hash.lower()
         expected = (contract.good.sha256 or "").lower() or None
         if self.blobs.get(signed) is None:
-            uploaded = self.blobs.uploaded_for(contract.deal_id)
+            uploaded = self.blobs.seller_uploads(contract.deal_id)
             if not uploaded:
                 return None
-            # The seller uploaded a file for this deal but signed a different hash: the signed claim is false.
+            # The seller itself handed over a file for this deal but signed a different hash: the signed claim is
+            # false. Only the seller's own uploads count here, or a buyer could upload junk to frame an honest seller.
             received = sorted(uploaded)[0]
             return Verification(
                 passed=False,
