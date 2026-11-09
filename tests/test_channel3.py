@@ -540,8 +540,12 @@ def test_pricefeed_stale_scenario_voids_citing_the_market_clause(runner):
 
 def test_pricefeed_mixed_scenario_settles_pro_rata(runner):
     result = runner.run(get_scenario("pricefeed-mixed"), mode="scripted")
-    assert result.state == "SETTLED"  # a pro-rata capture, or a full one in the rare case no bad row was sampled
-    assert result.attest["evidence"]["units_total"] == "20" or result.attest["verdict"] == "accept"
+    assert result.state == "SETTLED"
+    # The sample is seeded by the contract digest, which changes every run. About 1 run in 600 it misses all 8 bad
+    # rows: the buyer then accepts and reports no unit counts, so check the verdict before reading them.
+    if result.attest["verdict"] == "accept":
+        return
+    assert result.attest["evidence"].get("units_total") == "20"
 
 
 def test_pricefeed_scenarios_are_listed_only_with_the_flag(monkeypatch):
