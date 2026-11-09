@@ -1965,7 +1965,7 @@
         ]
       },
       "post": {
-        "description": "The seller sends the file's raw bytes (`application/octet-stream`) while funds are held, then records the delivery with that file's sha256 as `content_hash`. Trustee stores the file under its sha256, runs the contract's checks on it, and rules on its own result rather than on the buyer's report. The buyer gets the file from `GET` on the same path once the payment settles. No signature is needed here: only the file under the hash the seller signs is ever checked.",
+        "description": "The seller sends the file's raw bytes (`application/octet-stream`) while funds are held, then records the delivery with that file's sha256 as `content_hash`. Trustee stores the file under its sha256, runs the contract's checks on it, and rules on its own result rather than on the buyer's report. The buyer gets the file from `GET` on the same path once the payment settles. Signed by the seller's agent key: `X-Trustee-Signature` is the signature over the UTF-8 bytes of `trustee-upload:{deal_id}:{sha256}`, where `{sha256}` is the lowercase hex sha256 of the request body. Only the seller's signed upload counts as the seller's file, so no one else can upload a file that makes the seller's delivery look false.",
         "operationId": "upload_deliverable",
         "parameters": [
           {
@@ -1975,6 +1975,22 @@
             "schema": {
               "title": "Deal Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-trustee-signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Trustee-Signature"
             }
           }
         ],
@@ -1997,6 +2013,25 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "description": "Human-readable reason. A list of field errors for request-validation failures (422)."
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not signed by the seller, or signed over different bytes."
           },
           "404": {
             "content": {

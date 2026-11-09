@@ -519,8 +519,10 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
             "The seller sends the file's raw bytes (`application/octet-stream`) while funds are held, then records the "
             "delivery with that file's sha256 as `content_hash`. Trustee stores the file under its sha256, runs the "
             "contract's checks on it, and rules on its own result rather than on the buyer's report. The buyer gets "
-            "the file from `GET` on the same path once the payment settles. No signature is needed here: only the "
-            "file under the hash the seller signs is ever checked."
+            "the file from `GET` on the same path once the payment settles. Signed by the seller's agent key: "
+            "`X-Trustee-Signature` is the signature over the UTF-8 bytes of `trustee-upload:{deal_id}:{sha256}`, "
+            "where `{sha256}` is the lowercase hex sha256 of the request body. Only the seller's signed upload counts "
+            "as the seller's file, so no one else can upload a file that makes the seller's delivery look false."
         ),
         openapi_extra={
             "requestBody": {
@@ -530,6 +532,7 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
         },
         responses=_errors(
             {
+                401: "Not signed by the seller, or signed over different bytes.",
                 404: "No deal with this id.",
                 409: "The deal is not holding funds.",
                 413: "The file is too large.",
@@ -538,9 +541,11 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
         ),
         status_code=201,
     )
-    async def upload_deliverable(deal_id: str, request: Request) -> JSONResponse:
+    async def upload_deliverable(
+        deal_id: str, request: Request, x_trustee_signature: str | None = Header(default=None)
+    ) -> JSONResponse:
         data = await request.body()
-        return await call(service.upload_deliverable, deal_id, data, status=201)
+        return await call(service.upload_deliverable, deal_id, data, x_trustee_signature, status=201)
 
     @router.get(
         "/v1/deals/{deal_id}/deliverable",

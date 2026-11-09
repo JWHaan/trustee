@@ -27,6 +27,7 @@ from .platform.wire import (
     mandate_to_dict,
     principal_signing_bytes,
     revoke_signing_bytes,
+    upload_signing_bytes,
 )
 from .protocol import Attest, Contract, Delivery
 
@@ -164,12 +165,17 @@ class TrusteeClient:
             raise ValueError(f"contract is missing signatures from: {', '.join(missing)}")
         return self._request("POST", "/v1/deals", contract.model_dump(mode="json"))
 
-    def upload_deliverable(self, deal_id: str, data: bytes) -> dict[str, Any]:
-        """Hand Trustee the delivered file, so it can check it itself. Call before `deliver`."""
+    def upload_deliverable(self, deal_id: str, data: bytes, seller_key: AgentKey) -> dict[str, Any]:
+        """Hand Trustee the delivered file, so it can check it itself. Call before `deliver`.
+
+        Signed by the seller's agent key over `upload_signing_bytes(deal_id, data)`; Trustee refuses anyone else's."""
         resp = self._http.post(
             f"{self.base_url}/v1/deals/{deal_id}/deliverable",
             content=data,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={
+                "Content-Type": "application/octet-stream",
+                "X-Trustee-Signature": seller_key.sign(upload_signing_bytes(deal_id, data)),
+            },
         )
         return self._json_or_raise(resp)
 

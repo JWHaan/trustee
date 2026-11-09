@@ -164,6 +164,7 @@ def test_outside_agents_settle_through_the_v1_api():
     assert {"api", "identity", "state", "paypal"} <= kinds
     api = [(r["actor"], r["event"], r["note"].split(" ")[0]) for r in rows if r["kind"] == "api"]
     assert any(a[1] == "POST /v1/deals" and a[2] == "201" for a in api)
+    assert any(a[1] == "POST /v1/deals/{id}/deliverable" and a[2] == "201" for a in api)  # the seller's signed upload
     assert any(a[1] == "POST /v1/deals/{id}/delivery" and a[0].startswith("tidewater-sales") for a in api)
     assert any(a[1] == "POST /v1/deals/{id}/attest" and a[0].startswith("northwind-planner") for a in api)
     assert [r["check"] for r in rows if r["kind"] == "identity"] == ["verified"] * 4
