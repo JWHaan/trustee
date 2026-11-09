@@ -6,7 +6,7 @@ an issue, a commit message or the Devpost text.
 
 Assumed values, replace them if yours differ:
 
-- Repo: `JWHaan/trustee`, branch `feat/a2a-platform`
+- Repo: `JWHaan/trustee`, branch `main`
 - Render service: `trustee-arena`, so the public URL is `https://trustee-arena.onrender.com`
 
 ---
@@ -63,7 +63,7 @@ The script refuses to run with `PAYPAL_ENV=live`. It never prints credentials or
 ## d. Render
 
 - [ ] In Render, choose **New → Blueprint** and connect the GitHub repo `JWHaan/trustee`.
-- [ ] Set the branch to `feat/a2a-platform`. Render reads `render.yaml` from the repo root.
+- [ ] Set the branch to `main`. Render reads `render.yaml` from the repo root.
 - [ ] Fill in the `sync: false` secrets on the blueprint form:
   - `LLM_API_KEY`
   - `PAYPAL_CLIENT_ID`

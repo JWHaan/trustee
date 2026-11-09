@@ -8,9 +8,20 @@ In an agent-to-agent world, two agents can negotiate anything and enforce nothin
 Trustee is the missing trust layer: when buyer and seller agents form a machine
 contract, the Trustee gates it against both parties' **mandates** (AP2-lite:
 budget caps, counterparty allowlists, TTLs), holds the money in **PayPal escrow**
-(Orders authorize/capture/void, sandbox), settles on delivery + attestation, and
-auto-unwinds (voids + refunds) when the deal fails. Every decision lands in an
-append-only **ledger** that the arena UI tapes out in AG Grid.
+(Orders authorize/capture/void, sandbox), **checks the delivered file itself**, and
+settles or refunds on its own finding rather than on either party's word. Every
+decision lands in a hash-chained **ledger** that the arena UI tapes out in AG Grid.
+
+What it does today:
+
+- **Mandate gate, no LLM:** signed spend and receive limits are checked before PayPal is called ([What Trustee stops](#what-trustee-stops)).
+- **Trustee verifies the delivery:** the seller hands Trustee the file with a signed upload; Trustee runs the contract's hash, schema, row and market checks on those bytes, and the buyer gets the file once the payment settles ([Platform API](#platform-api-a2a)).
+- **Pro-rata settlement:** a partly valid delivery pays for its valid share, by Trustee's own count ([docs/PARTIAL_CAPTURE.md](docs/PARTIAL_CAPTURE.md)).
+- **Signed receipts and dispute evidence packs** that anyone can verify offline, plus a plain-language `summary` on every deal ([What a deal reports](#what-a-deal-reports)).
+- **AI-drafted acceptance criteria:** the model drafts checkable criteria from a buyer's request; code keeps only what the request says.
+- **A2A platform:** independent agents discover Trustee by its Agent Card and run deals over signed REST or A2A JSON-RPC with push notifications ([A2A](#a2a-json-rpc-and-push-notifications)).
+- **Autonomous payments:** a human consents once with an intent mandate; the agent then pays inside limits Trustee enforces ([Autonomous payments](#autonomous-payments-consent-once-then-no-clicks)).
+- **An executable attack table:** every trick Trustee stops is a test in CI, and the table below is generated from those tests.
 
 ## Who it's for
 
@@ -26,13 +37,15 @@ settles it. If the file is wrong, the money goes back to Northwind.
 ## Money path
 
 ```
-contract formed
+contract formed, signed by both agents
   -> mandate gate (no LLM: hard policy)        rejected? deal dies, money untouched
   -> PayPal Orders.create + authorize           funds HELD, not moved
-  -> seller agent delivers (bytes + sha256)
-  -> buyer agent attests (sha256 + CSV schema and row checks on the delivered file)
-       accept -> capture  (settled to seller)
-       reject -> arbiter -> void (refund)  |  deadline lapse -> auto-void
+  -> seller hands Trustee the file (signed upload), then records the delivery (signed sha256)
+  -> Trustee checks those bytes itself: sha256, schema and row rules, market check
+  -> buyer attests (advisory when Trustee holds the file; the fallback when it does not)
+       checks pass -> capture (settled to seller)   buyer still rejects -> held for a person
+       checks fail -> void (refund)   pro-rata term -> pay the valid share   deadline lapse -> auto-void
+  -> signed receipt + signed dispute evidence pack
 ```
 
 Contracts can opt in to pro-rata settlement (a rejected delivery pays for its valid share) and the sweeper can
