@@ -69,6 +69,7 @@ Every row is an executable check in `tests/test_attacks.py`, run by CI. The tabl
 | Someone replays an older, looser signed limit | Refused | ✅ refused (409) |
 | The seller ships a junk file | Refunded on Trustee's own check | ✅ refunded on Trustee's own check |
 | The seller signs the contract's hash but hands over a different file | Refunded; the lie is caught | ✅ refunded, lie caught |
+| The buyer uploads a junk file to frame a seller who delivered directly | Ignored: only the seller's signed upload counts | ✅ upload refused (401), seller not framed |
 | The buyer gets a correct file and claims it failed | Held for a person; no free refund | ✅ held for a person, no free refund |
 | The buyer under-reports valid rows to pay less | Pays by Trustee's own count | ✅ paid 90% (Trustee's count), not 52% |
 | The seller sells a price feed with stale prices | Refunded on the market check | ✅ refunded on the market check |
@@ -77,7 +78,7 @@ Every row is an executable check in `tests/test_attacks.py`, run by CI. The tabl
 | The server dies right after PayPal holds the money | Finished on restart; one hold | ✅ finished on restart, one hold |
 | The database fails just before a payment | No PayPal call | ✅ refused (503), PayPal never called |
 
-16 of 16 defences held (2026-11-08, dry-run, `python scripts/attack_report.py`).
+17 of 17 defences held (2026-11-09, dry-run, `python scripts/attack_report.py`).
 <!-- attack-table:end -->
 
 ## What a deal reports
@@ -204,7 +205,7 @@ use. Every mutating call is signed, so it is attributable to a key.
 | `POST /v1/agents` | agent key + principal | register an agent; the principal vouches for it |
 | `POST /v1/mandates`, `POST /v1/mandates/{agent_id}/revoke` | principal | publish / revoke a spend or receive mandate |
 | `POST /v1/deals` | buyer and seller (contract digest) | check both mandates, hold funds; idempotent on `deal_id` |
-| `POST /v1/deals/{id}/deliverable` | none (stored by sha256) | hand Trustee the file so it checks it itself |
+| `POST /v1/deals/{id}/deliverable` | seller (`X-Trustee-Signature` over `trustee-upload:{deal_id}:{sha256}`) | hand Trustee the file so it checks it itself; only the seller's signed upload counts |
 | `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
 | `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
 | `GET /v1/deals/{id}/evidence` | none | signed dispute evidence pack: contract, delivery, Trustee's check, attestation, ruling, receipt, ledger |
@@ -234,7 +235,7 @@ re-reserves their budgets and resumes sweeping them, and finishes any escrow ope
 answered with the same request id, so a crash or restart cannot strand a PayPal hold. Ledger events that fail to
 save are retried in order, never dropped. The default (`:memory:`) persists nothing.
 
-**Trustee checks the file itself.** When the seller uploads the file before recording the delivery, Trustee runs the
+**Trustee checks the file itself.** When the seller uploads the file (signed with its agent key) before recording the delivery, Trustee runs the
 contract's checks on those exact bytes (hash, schema and row rules, the Channel3 market check) and rules on its own
 result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
 payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena

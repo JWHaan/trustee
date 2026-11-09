@@ -128,6 +128,17 @@ def lying_seller_hash(_: Path) -> str:
     return "refunded, lie caught"
 
 
+def buyer_frames_seller(_: Path) -> str:
+    w = DataWorld().setup()
+    w.open(w.data_contract())
+    r = w.upload(JUNK_FILE, signer="buyer")  # the buyer hands Trustee junk for the deal
+    w.deliver_hash(sha(GOOD_FILE))  # the seller sent the right file directly and signs its hash
+    body = w.attest_with("reject", {}).json()
+    assert r.status_code == 401 and w.service.blobs.seller_uploads("deal-1") == set()
+    assert body["state"] != "VOIDED" and w.paypal.calls["void"] == 0
+    return "upload refused (401), seller not framed"
+
+
 def false_complaint(_: Path) -> str:
     w = DataWorld().setup()
     w.open(w.data_contract())
@@ -233,6 +244,12 @@ CASES: list[Case] = [
         "The seller signs the contract's hash but hands over a different file",
         "Refunded; the lie is caught",
         lying_seller_hash,
+    ),
+    Case(
+        "framed-seller",
+        "The buyer uploads a junk file to frame a seller who delivered directly",
+        "Ignored: only the seller's signed upload counts",
+        buyer_frames_seller,
     ),
     Case(
         "false-complaint",

@@ -52,6 +52,7 @@ from .wire import (
     mandate_to_dict,
     principal_signing_bytes,
     revoke_signing_bytes,
+    upload_signing_bytes,
 )
 
 log = logging.getLogger(__name__)
@@ -742,16 +743,20 @@ class DealService:
 
     # ------------------------------------------------------- the delivered file
 
-    def upload_deliverable(self, deal_id: str, data: bytes) -> dict[str, Any]:
+    def upload_deliverable(self, deal_id: str, data: bytes, signature: str | None) -> dict[str, Any]:
         """The seller hands Trustee the file before recording the delivery, so Trustee can check it itself.
 
-        No signature is needed: the file is stored under its own sha256, and Trustee only checks the bytes under the
-        hash the seller *signs* in the delivery. Uploading anything else changes nothing."""
-        trustee, _ = self._require(deal_id)
+        Signed by the seller's agent key over `upload_signing_bytes(deal_id, data)`. The signature matters because an
+        upload for the deal is evidence against the seller: a signed delivery naming a hash Trustee holds no file for,
+        when the seller did upload something, is a false claim. Without it, a buyer could upload junk and frame a
+        seller who delivered the file directly. Unsigned or wrongly signed uploads are refused and nothing is stored."""
+        trustee, contract = self._require(deal_id)
+        if not self.registry.verify(contract.seller, signature, upload_signing_bytes(deal_id, data)):
+            raise ServiceError(401, "the upload must be signed by the seller's agent key")
         if trustee.deal.state not in (DealState.ESCROWED, DealState.DELIVERED):
             raise ServiceError(409, f"files are accepted while funds are held; the deal is {trustee.deal.state.value}")
         try:
-            digest = self.blobs.put(data, deal_id)
+            digest = self.blobs.put(data, seller_upload_for=deal_id)
         except BlobError as exc:
             raise ServiceError(413 if "larger" in str(exc) else 422, str(exc)) from None
         return {"deal_id": deal_id, "sha256": digest, "size": len(data)}
