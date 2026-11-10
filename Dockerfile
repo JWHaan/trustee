@@ -1,7 +1,5 @@
-# Two stages so the image ships a built UI without shipping node_modules.
-# The plan's §4 assumed Render's Python runtime could also build a Vite app and
-# that `uv run --extra all` existed; neither is true (there is no `all` extra),
-# so the build is pinned here instead of guessed at deploy time.
+# Two stages so the image ships a built UI without shipping node_modules: a Node
+# stage builds the arena UI, and the Python stage serves the built files.
 
 FROM node:22-alpine AS ui
 WORKDIR /ui

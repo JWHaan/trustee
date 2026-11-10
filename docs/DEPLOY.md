@@ -56,7 +56,8 @@ The script refuses to run with `PAYPAL_ENV=live`. It never prints credentials or
 ## c. NVIDIA NIM (LLM)
 
 - [ ] Sign in at https://build.nvidia.com and create an API key. Keep it in your password manager.
-- [ ] Model: `meta/llama-3.1-70b-instruct`, endpoint `https://integrate.api.nvidia.com/v1` (the defaults in `.env.example`).
+- [ ] Model: `nvidia/nemotron-3.5-lightning-30b-a3b` with thinking off (`LLM_EXTRA_BODY`), endpoint
+  `https://integrate.api.nvidia.com/v1` (the defaults in `.env.example`).
 - [ ] Put the key in `.env` as `LLM_API_KEY`. With the key empty, the arena runs in scripted mode. The money path
   still runs, but the chat is replayed from recorded moves.
 

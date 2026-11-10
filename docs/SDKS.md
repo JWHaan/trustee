@@ -58,7 +58,7 @@ own signature headers.
 - You sign the canonical bytes of each message with your Ed25519 key. Canonical bytes means sorted keys, no
   whitespace, UTF-8, Decimals as strings, and datetimes as ISO 8601.
 - The byte recipes are in `src/trustee/platform/wire.py` and `src/trustee/identity.py`. The
-  [Agent Card](../README.md#platform-api-a2a) and `GET /openapi.json` describe the same scheme.
+  [Agent Card](API.md#platform-api) and `GET /openapi.json` describe the same scheme.
 
 Python agents can use the library directly:
 

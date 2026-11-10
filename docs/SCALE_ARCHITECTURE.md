@@ -42,7 +42,7 @@ fixed** (§6, steps 1 and 2); the descriptions are kept because the same rule ca
 `Trustee.on_contract` and writes the deal row only afterwards (`_persist`). If the process dies after PayPal
 authorizes but before that write, the buyer's funds are held at PayPal with no deal row to sweep or reconcile. The
 events up to `CONTRACTED` are stored, and a client retry of the same `deal_id` recovers safely thanks to the
-deterministic request id, but nothing on the server side recovers it alone. The README's claim that "a restart cannot
+deterministic request id, but nothing on the server side recovers it alone. The claim (then in the README, now in [API.md](API.md#platform-api)) that "a restart cannot
 strand a PayPal hold" held only for deals that were already written.
 
 *Fixed:* before every PayPal call that can hold or move money, the Trustee records the operation and its request id
@@ -233,5 +233,5 @@ more replicas, not by making any single step faster.
 7. **Load test.** A Locust or k6 run against the API with a PayPal mock that adds realistic latency and errors, to
    replace the estimates in §5 with measurements.
 
-Steps 3 and 4 are where speed and verifiability improve together. Which hackathon sponsor tools help with each
-step is in [SPONSORS.md](./SPONSORS.md).
+Steps 3 and 4 are where speed and verifiability improve together. Which integrations help with each step is in
+[INTEGRATIONS.md](./INTEGRATIONS.md).

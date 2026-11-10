@@ -1,40 +1,37 @@
 # Trustee
 
-[![ci](https://github.com/JWHaan/trustee/actions/workflows/ci.yml/badge.svg)](https://github.com/JWHaan/trustee/actions/workflows/ci.yml)
+[![CI](https://github.com/JWHaan/trustee/actions/workflows/ci.yml/badge.svg)](https://github.com/JWHaan/trustee/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab.svg)](pyproject.toml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-An escrow + arbitration agent for agent-to-agent commerce — PayPal AI Hackathon entry.
+**Escrow and arbitration for agent-to-agent commerce, on PayPal.** When one company's AI agent buys data or digital
+work from another company's agent, Trustee holds the payment with PayPal, checks the delivered file itself, and pays
+the seller only if the file matches the contract. Otherwise the buyer gets the money back.
 
-In an agent-to-agent world, two agents can negotiate anything and enforce nothing.
-Trustee is the missing trust layer: when buyer and seller agents form a machine
-contract, the Trustee gates it against both parties' **mandates** (AP2-lite:
-budget caps, counterparty allowlists, TTLs), holds the money in **PayPal escrow**
-(Orders authorize/capture/void, sandbox), **checks the delivered file itself**, and
-settles or refunds on its own finding rather than on either party's word. Every
-decision lands in a hash-chained **ledger** that the arena UI tapes out in AG Grid.
+**Try it:** the [live demo](https://trustee-arena.onrender.com) runs on the PayPal sandbox, so each payment there
+waits for approval from a PayPal sandbox buyer account, and the free host can take a minute to wake up. The
+[local dry run](#quickstart) needs no account and runs every deal to the end. Built for the PayPal AI Hackathon.
 
-What it does today:
+| Honest seller: paid | Cheating seller: refunded |
+|---|---|
+| ![The arena after an honest deal: the seller received $156.00 and every check passed](docs/arena-honest.png) | ![The arena after the seller shipped the wrong file: the buyer keeps $170.00](docs/arena-cheat.png) |
 
-- **Mandate gate, no LLM:** signed spend and receive limits are checked before PayPal is called ([What Trustee stops](#what-trustee-stops)).
-- **Trustee verifies the delivery:** the seller hands Trustee the file with a signed upload; Trustee runs the contract's hash, schema, row and market checks on those bytes, and the buyer gets the file once the payment settles ([Platform API](#platform-api-a2a)).
-- **Pro-rata settlement:** a partly valid delivery pays for its valid share, by Trustee's own count ([docs/PARTIAL_CAPTURE.md](docs/PARTIAL_CAPTURE.md)).
-- **Signed receipts and dispute evidence packs** that anyone can verify offline, plus a plain-language `summary` on every deal ([What a deal reports](#what-a-deal-reports)).
-- **AI-drafted acceptance criteria:** the model drafts checkable criteria from a buyer's request; code keeps only what the request says.
-- **A2A platform:** independent agents discover Trustee by its Agent Card and run deals over signed REST or A2A JSON-RPC with push notifications ([A2A](#a2a-json-rpc-and-push-notifications)).
-- **Autonomous payments:** a human consents once with an intent mandate; the agent then pays inside limits Trustee enforces ([Autonomous payments](#autonomous-payments-consent-once-then-no-clicks)).
-- **An executable attack table:** every trick Trustee stops is a test in CI, and the table below is generated from those tests.
+## Why Trustee
 
-## Who it's for
+Two agents can negotiate anything and enforce nothing. Trustee is the trust layer between them. When a buyer agent
+and a seller agent sign a machine contract, Trustee checks it against both parties' **mandates** (AP2-style signed
+limits: budget caps, counterparty allowlists, expiry), holds the money in **PayPal escrow** (Orders authorize, then
+capture or void), **checks the delivered file itself**, and settles or refunds on its own finding rather than on
+either party's word. Every decision lands in a hash-chained **ledger**.
 
-Any business whose agents buy data, API access or digital work from another
-company's agents. The worked example in this repo: **Northwind Outfitters**, a
-mid-size online apparel retailer, has a demand-planning agent that buys a Q3
-returns dataset from **Tidewater Data Co.**, a retail-data vendor. Northwind's
-finance ops lead grants the buying agent a $500 spend mandate: digital data
-only, this vendor only. Tidewater's sales agent delivers the CSV. Trustee holds
-the payment until the file's hash and schema match the signed contract, then
+**Who it's for.** Any business whose agents buy data, API access or digital work from another company's agents. The
+worked example in this repository: **Northwind Outfitters**, a mid-size online apparel retailer, has a
+demand-planning agent that buys a Q3 returns dataset from **Tidewater Data Co.**, a retail-data vendor. Northwind's
+finance ops lead grants the buying agent a $500 spend mandate: digital data only, this vendor only. Tidewater's sales
+agent delivers the CSV. Trustee holds the payment until the file's hash and schema match the signed contract, then
 settles it. If the file is wrong, the money goes back to Northwind.
 
-## Money path
+## How it works
 
 ```
 contract formed, signed by both agents
@@ -48,23 +45,24 @@ contract formed, signed by both agents
   -> signed receipt + signed dispute evidence pack
 ```
 
-Contracts can opt in to pro-rata settlement (a rejected delivery pays for its valid share) and the sweeper can
-renew held authorizations after PayPal's 3-day honor period: see [docs/PARTIAL_CAPTURE.md](docs/PARTIAL_CAPTURE.md).
+The model proposes and explains; only the policy layer can call PayPal. Terminal states are immutable and webhook
+replays are idempotent no-ops, so funds can never settle twice or be stranded.
 
-A buyer can also check a delivered price feed against live market data from Channel3 before releasing the money (opt-in
-`pricefeed` scenarios, recorded fixtures when no key is set): see [docs/CHANNEL3.md](docs/CHANNEL3.md).
-
-The LLM proposes and explains; the policy layer is the only thing that can
-touch PayPal. Terminal states are immutable; webhook replays are idempotent
-no-ops — funds can never double-settle or strand.
-
-| Honest seller — settled | Cheating seller — refunded |
-|---|---|
-| ![honest run](docs/arena-honest.png) | ![cheat run](docs/arena-cheat.png) |
-
-Why this matters for PayPal, and how it would scale from this demo to a PayPal product:
-[docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md). How to run it at high volume while keeping every payment
-verifiable: [docs/SCALE_ARCHITECTURE.md](docs/SCALE_ARCHITECTURE.md).
+- **Mandate gate, no LLM:** signed spend and receive limits are checked before PayPal is called.
+- **Trustee verifies the delivery:** the seller hands Trustee the file with a signed upload; Trustee runs the
+  contract's hash, schema, row and market checks on those bytes, and the buyer gets the file once the payment settles.
+- **Pro-rata settlement:** a partly valid delivery pays for its valid share, by Trustee's own count
+  ([details](docs/PARTIAL_CAPTURE.md)).
+- **Signed receipts and dispute evidence packs** that anyone can verify offline, plus a plain-language
+  [`summary`](docs/API.md#what-a-deal-reports) on every deal.
+- **AI-drafted acceptance criteria:** the model drafts checkable criteria from a buyer's request; code keeps only
+  what the request says.
+- **A2A platform:** independent agents discover Trustee by its Agent Card and run deals over signed REST or A2A
+  JSON-RPC with push notifications ([details](docs/A2A.md)).
+- **Autonomous payments:** a human consents once with an intent mandate; the agent then pays inside limits Trustee
+  enforces, and a price over the signed cap steps up to a person ([details](docs/AUTONOMY.md)).
+- **Market check for price feeds:** a delivered price feed can be checked against live Channel3 market data before
+  the money is released ([details](docs/CHANNEL3.md)).
 
 ## What Trustee stops
 
@@ -94,40 +92,22 @@ Every row is an executable check in `tests/test_attacks.py`, run by CI. The tabl
 17 of 17 defences held (2026-11-09, dry-run, `python scripts/attack_report.py`).
 <!-- attack-table:end -->
 
-## What a deal reports
+## Quickstart
 
-Every deal carries a `summary`: in `GET /v1/deals/{id}`, in the A2A task status (data part) and in each arena run.
-
-```json
-{
-  "status": "refunded",
-  "tone": "neutral",
-  "headline": "Refunded: the buyer keeps $170.00.",
-  "reasons": [
-    "The delivery failed the contract: it isn't the file the contract names (its fingerprint is different).",
-    "Trustee checked the file itself, so this didn't rest on the buyer's word."
-  ],
-  "next_step": null,
-  "money": {"paid_to_seller": "0.00", "returned_to_buyer": "170.00", "held": "0.00"},
-  "currency": "USD"
-}
-```
-
-`status` is one of `paid`, `partly_paid`, `refunded`, `cancelled`, `refused`, `on_hold`, `awaiting_approval`,
-`in_progress`; agents branch on it, people read the headline. It describes decisions already made and never makes one
-(`src/trustee/summary.py`).
-
-## Run it
+You need Python 3.12+ and [uv](https://docs.astral.sh/uv/); the arena UI also needs Node.js. No credentials are
+needed: without PayPal keys Trustee runs a dry run with local order ids, and without a model key the agents replay
+recorded moves.
 
 ```bash
 uv sync --extra dev
-uv run pytest                       # 650+ tests, dry-run: no credentials needed
+uv run pytest                       # the full suite, dry-run: no credentials needed
 
-# the judge's no-UI path — full ledger to stdout, exits non-zero if the deal
-# doesn't reach the expected terminal state
+# one deal with no UI: prints the full ledger and exits non-zero if the deal
+# doesn't reach the expected terminal state. Other scenarios for run_honest:
+# partial, overreach, pricefeed, pricefeed-stale, pricefeed-mixed
 uv run python -m trustee.arena.fixtures.run_honest
 uv run python -m trustee.arena.fixtures.run_cheat
-uv run python -m trustee.arena.fixtures.run_honest partial   # or overreach, pricefeed, pricefeed-stale, pricefeed-mixed
+uv run python -m trustee.arena.fixtures.run_honest partial
 
 # the arena
 cd arena/ui && npm install && npm run build && cd ../..
@@ -135,415 +115,41 @@ uv run python -m uvicorn trustee.arena.api:app --port 8000
 open http://127.0.0.1:8000
 ```
 
-The page runs the honest deal on load, then gives you one button per scenario and a
-mode selector. No account, no login, no setup.
+The page runs the honest deal on load, then gives you one button per scenario. Use `python -m uvicorn`, not bare
+`uvicorn`: the bare name resolves a global install and will not see this project's package.
 
-> Use `python -m uvicorn`, not bare `uvicorn` — the bare name resolves a global
-> install and will not see this project's package.
+More to run: [`examples/a2a_deal.py`](examples/a2a_deal.py) (two agents, a full escrowed deal over HTTP),
+[`examples/a2a_network.py`](examples/a2a_network.py) (three A2A agents on their own ports) and, with PayPal sandbox
+credentials, [a real escrowed payment](docs/API.md#real-paypal-sandbox).
 
-## The arena
+## Documentation
 
-| Endpoint | Purpose |
+| Guide | What it covers |
 |---|---|
-| `POST /api/runs` `{scenario, mode}` | start a run, returns `{run_id}` |
-| `GET /api/runs/{id}` | state snapshot: deal state, contract, escrow, ruling |
-| `GET /api/runs/{id}/receipt` | the run's signed settlement receipt |
-| `GET /api/runs/{id}/events` | SSE: one `msg` per ledger row, then `done` |
-| `GET /api/ledger?limit=500` | flat rows for the grid |
-| `GET /api/scenarios` | fixture-driven scenario list (the ones the UI shows) |
-| `GET /healthz` | liveness, whether PayPal is dry-run, and `durability` (ledger events and deal states not yet on disk; both should be 0) |
+| [The arena](docs/ARENA.md) | Every scenario, the page, modes, approving in the PayPal sandbox, a three-minute demo script |
+| [Platform API](docs/API.md) | Endpoints, signing, errors, durability, delivery checks, evidence packs, the PayPal sandbox flow |
+| [A2A](docs/A2A.md) | Trustee over the Agent2Agent protocol, and Northwind and Tidewater as A2A agents |
+| [Autonomous payments](docs/AUTONOMY.md) | Consent once; the agent then pays inside a signed intent mandate |
+| [Client libraries](docs/SDKS.md) | The Python client, OpenAPI and the Postman collection |
+| [Configuration](docs/CONFIGURATION.md) | Environment variables |
+| [Trustee at PayPal scale](docs/PAYPAL_SCALE.md) | Why this matters for PayPal, and what it would take to become a product |
+| [Speed, scale and accountability](docs/SCALE_ARCHITECTURE.md) | Running at high volume while keeping every payment verifiable |
 
-SSE is replay-first: a subscriber is pre-filled with everything the run has
-already emitted, then fed live, so refreshing mid-run shows the same tape in
-the same order. Runs execute on a worker thread (`asyncio.to_thread`) because
-the agents are synchronous; ledger callbacks are marshalled back onto the event
-loop with `call_soon_threadsafe`.
-
-**Scenarios.** Ten, all in `fixtures/scenarios.json`. The UI lists the first six; the other four are always
-runnable by name and appear in the UI only when their flag is set:
-
-| Scenario | What it proves | Ends |
-|---|---|---|
-| `honest` | Negotiated deal, machine-checked delivery, capture. | `SETTLED` |
-| `cheat` | A junk delivery fails the hash and schema checks; the arbiter cites the clause and voids. | `VOIDED` |
-| `forged` | Someone who is not Tidewater signs the contract as Tidewater (an unregistered key). Trustee rejects it with `rejected_identity` before PayPal is called: zero PayPal requests. | `outcome: rejected_identity` |
-| `outside` | Northwind's and Tidewater's agents act as outside clients of this server's own public `/v1` API (registration, signed mandates, contract, delivery, attestation), each HTTP call shown as an `api` row next to the platform's own rows. | `SETTLED` |
-| `a2a` | Northwind and Tidewater are separate A2A agents: they find each other by Agent Card, negotiate with signed offers, open the escrow at Trustee, and Tidewater ships when Trustee pushes "funds held". | `SETTLED` |
-| `overreach` | The human said "at most $175"; the seller will not go below $190. The signed intent mandate refuses to pay unattended and steps up to a human approval (simulated in dry-run). | `SETTLED` after step-up |
-| `partial` | 500 of 5,000 rows fail the row checks; a signed pro-rata term captures the valid 90% ($140.40 of $156.00) and releases the rest. Listed with `ARENA_PARTIAL_SCENARIO=1`. | `SETTLED` (partial) |
-| `pricefeed` | A competitor price feed; the buyer samples 20 rows and checks them against live Channel3 offers before paying. Listed with `ARENA_PRICEFEED_SCENARIO=1`. | `SETTLED` |
-| `pricefeed-stale` | The hash matches, but the prices are months old; the market check fails and the escrow is voided. | `VOIDED` |
-| `pricefeed-mixed` | 8 of 40 rows are wrong; pro-rata capture of the sampled rows that checked out. | `SETTLED` (partial) |
-
-**The page.** One answer leads: what happened to the money and why, in the words of the deal's `summary` (the same
-text agents get from `GET /v1/deals/{id}` and the A2A task status). Under it, a line shows where the money is
-(buyer, PayPal hold, seller) and a step-by-step progress bar. Everything else is one click away under
-**See how it happened**:
-
-- **Conversation:** what the agents said and did.
-- **Checks:** signatures, spending rules and the delivery, failures first.
-- **Ledger:** the raw tape in AG Grid, with `signer` and `check` columns, kind filters and search.
-
-The header says whether PayPal is in the sandbox or a dry run.
-
-`outside` calls the arena's own `/v1` over a real socket: `http://127.0.0.1:$PORT` by default (`PORT`, default
-8000), or `ARENA_SELF_URL` if the server is reachable under another address. It sends `TRUSTEE_OPERATOR_TOKEN`
-when one is set. Its agents get a fresh id and key per run (`northwind-planner-<run>`, `tidewater-sales-<run>`).
-
-**Approving in the PayPal sandbox.** With sandbox credentials, no scenario holds funds until the buyer approves. The
-run stops at `CONTRACTED`, writes an `awaiting_approval` row carrying the approve link and shows an
-"Approve in PayPal sandbox" button with a countdown. The arena polls PayPal every `ARENA_APPROVAL_POLL_SECONDS`
-(default 3); once the order is `APPROVED` the run continues to delivery and attestation. No approval within
-`ARENA_APPROVAL_TIMEOUT_SECONDS` (default 300), or a click on cancel in PayPal, voids the deal with no money call
-(`outcome: approval_timeout` / `approval_cancelled`). PayPal's return and cancel redirects for an arena order
-(`/v1/paypal/return`, `/v1/paypal/cancel`) answer `303` to `/`; cancel also ends that run's wait. Set
-`TRUSTEE_PUBLIC_URL` (or `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL`) so PayPal can send the buyer back. This path is
-tested against a mocked PayPal only, like the rest of the sandbox flow.
-
-**Modes.** `auto` (default) tries the live model and falls back to a recorded
-transcript, saying so on the tape. `live` fails loudly — that is the mode you
-run a reliability drill in. `scripted` never touches the network: the full
-money path still runs for real, only the chat is replayed.
-
-## Platform API (A2A)
-
-Besides the arena, Trustee runs as a service that independent agents on other machines can discover and
-use. Every mutating call is signed, so it is attributable to a key.
-
-| Endpoint | Who signs | Purpose |
-|---|---|---|
-| `GET /.well-known/agent.json` (also `agent-card.json`) | n/a | A2A Agent Card: skills, interfaces, signing scheme |
-| `POST /a2a` | the signed payloads inside | A2A JSON-RPC: the same operations as skills, deals as tasks, push notifications ([A2A](#a2a-json-rpc-and-push-notifications)) |
-| `POST /v1/principals` | principal key (proof of possession) | register a principal (the human/company behind agents) |
-| `POST /v1/agents` | agent key + principal | register an agent; the principal vouches for it |
-| `POST /v1/mandates`, `POST /v1/mandates/{agent_id}/revoke` | principal | publish / revoke a spend or receive mandate |
-| `POST /v1/deals` | buyer and seller (contract digest) | check both mandates, hold funds; idempotent on `deal_id` |
-| `POST /v1/deals/{id}/deliverable` | seller (`X-Trustee-Signature` over `trustee-upload:{deal_id}:{sha256}`) | hand Trustee the file so it checks it itself; only the seller's signed upload counts |
-| `POST /v1/deals/{id}/delivery` | seller | report the deliverable and its hash |
-| `GET /v1/deals/{id}/deliverable` | buyer (`X-Trustee-Signature`) | download the file, once the payment has settled |
-| `GET /v1/deals/{id}/evidence` | none | signed dispute evidence pack: contract, delivery, Trustee's check, attestation, ruling, receipt, ledger |
-| `POST /v1/criteria/draft` | none | AI drafts checkable acceptance criteria from a buyer's request; code keeps only what the request says |
-| `POST /v1/deals/{id}/attest` | buyer | accept (capture) or reject (arbitration) |
-| `POST /v1/deals/{id}/resolve` | operator bearer token | human override of a `DISPUTED` deal |
-| `GET /v1/deals/{id}`, `GET /v1/deals/{id}/events`, `GET /v1/agents/{id}` | none | state, persisted ledger, public agent record |
-
-**Signing.** Ed25519 keys; public keys and signatures are urlsafe base64. Signed bytes are canonical JSON
-(sorted keys, no whitespace, UTF-8; Decimals as strings, datetimes ISO 8601) of the object without its
-`signature` field. A contract is signed over its sha256 `digest()` by each party. The recipes live in
-`src/trustee/platform/wire.py`; `trustee.client.TrusteeClient` does all of it for you.
-
-**Errors.** Bad or missing signature `401`; mandate refused `403` (with `violations`); unknown deal or
-agent `404`; illegal state or conflicting retry `409`; PayPal failure `502` (the body carries the deal view,
-funds are where it says, and repeating the call is safe); storage unable to record the payment intent `503` (no
-PayPal call was made, nothing moved, and repeating the call is safe).
-
-**Auth.** `POST /v1/principals` is open unless `TRUSTEE_OPERATOR_TOKEN` is set. That is fine for a
-hackathon and not for the open internet. `POST /v1/deals/{id}/resolve` always needs that token and returns
-`403` when none is configured. `GET` endpoints are public.
-
-**Durability.** With `TRUSTEE_DB_PATH` set, principals, agents, mandates, deals and the event tape live in
-SQLite. Before every PayPal call that can hold or move money, the deal and the pending operation (with its request
-id) are written first; if that write fails, PayPal is not called. On start the service reloads open deals,
-re-reserves their budgets and resumes sweeping them, and finishes any escrow opening that was recorded but never
-answered with the same request id, so a crash or restart cannot strand a PayPal hold. Ledger events that fail to
-save are retried in order, never dropped. The default (`:memory:`) persists nothing.
-
-**Trustee checks the file itself.** When the seller uploads the file (signed with its agent key) before recording the delivery, Trustee runs the
-contract's checks on those exact bytes (hash, schema and row rules, the Channel3 market check) and rules on its own
-result: a failed check refunds the buyer, a passed check that the buyer rejects is held for a person, and a pro-rata
-payment uses Trustee's count of valid items. The buyer gets the file from Trustee once the payment settles. All arena
-scenarios hand Trustee the file. Without an upload, the buyer's check is the fallback (`src/trustee/verification.py`).
-
-**AI-drafted acceptance criteria.** `POST /v1/criteria/draft` turns a request such as "at least 5,000 orders with
-columns order_id, sku and refund_usd; no blank refund_usd" into contract criteria Trustee can check: a schema, a row
-count with required fields, the file hash, a market check for price feeds. The model proposes; a column or a number is
-kept only if the request contains it, and anything else comes back as a criterion a person decides. Trustee then runs
-those same criteria on the delivered file, so a data product with no hand-written checker is still verified
-(`src/trustee/criteria.py`).
-
-**Evidence for disputes.** Every deal has a signed evidence pack (`GET /v1/deals/{id}/evidence`, and a link on the
-arena page): the contract with both signatures, the seller's signed delivery, Trustee's own check of the file, the
-buyer's attestation, the ruling, the summary, the receipt, the PayPal ids and every ledger event with a re-check of the
-hash chain. `trustee.evidence.verify_evidence_pack` checks it offline; editing anything breaks the signature. Each
-PayPal order also carries `trustee:<contract sha256>` as its `custom_id`, so the PayPal record and Trustee's record
-find each other.
-
-**Contradicted claims.** A buyer who rejects with a hash mismatch when the seller's signed delivery hash equals the
-contract's does not get an automatic refund: the deal is `DISPUTED`, funds stay held, and it is flagged for a human
-(`/resolve`). See [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md) §4.1.
-
-| Var | Default | Meaning |
-|---|---|---|
-| `TRUSTEE_DB_PATH` | `:memory:` | SQLite file; set it to survive restarts |
-| `TRUSTEE_OPERATOR_TOKEN` | unset | gates principal registration; enables `/resolve` |
-| `TRUSTEE_SWEEP_SECONDS` | `30` | deadline sweep interval |
-| `TRUSTEE_PUBLIC_URL` | request URL | base URL advertised in the Agent Card; also the default host of the PayPal return/cancel URLs |
-| `PAYPAL_WEBHOOK_ID` | unset | id of the PayPal webhook; without it live webhooks cannot be verified and are rejected |
-| `TRUSTEE_WEBHOOK_ALLOW_UNVERIFIED` | off | `1` lets a dry-run server accept unsigned webhooks. Dev only |
-
-Two agents, two principals, a full escrowed deal over HTTP:
-
-```bash
-python -m uvicorn trustee.arena.api:app --host 127.0.0.1 --port 8000
-python examples/a2a_deal.py --base-url http://127.0.0.1:8000
-```
-
-### Real PayPal sandbox
-
-**Untested against real PayPal until someone runs the POC below with sandbox credentials.** Everything in
-this section is covered by tests that mock PayPal's HTTP, not by a live run.
-
-With credentials set (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`), an AUTHORIZE order holds no funds until the
-payer approves it. The deal stays `CONTRACTED`; its view carries `escrow.approve_url`. Then:
-
-- **Approval.** PayPal redirects the payer to `GET /v1/paypal/return?token=<order_id>`. Trustee re-checks both
-  mandates, authorizes the order (one call, request id `trustee-<deal>-authorize`) and moves to `ESCROWED`.
-  Repeating the return is a no-op. `GET /v1/paypal/cancel?token=<order_id>` voids the deal; nothing was held.
-  Set `TRUSTEE_PUBLIC_URL` and these become the default `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL`
-  (an explicit value wins). Send `Accept: application/json` to get JSON instead of the HTML page.
-- **No approval by the deadline** voids the deal without a PayPal call.
-- **Polling fallback.** Each sweep also reads up to 20 awaiting orders from PayPal and authorizes the ones that
-  are `APPROVED`. This is what makes local development work without a public webhook URL.
-- **Webhooks.** Point a PayPal webhook at `POST /v1/paypal/webhook` (needs a public URL) and subscribe to
-  `CHECKOUT.ORDER.APPROVED`, `PAYMENT.AUTHORIZATION.VOIDED`, `PAYMENT.CAPTURE.COMPLETED`,
-  `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.REVERSED` and `PAYMENT.CAPTURE.REFUNDED`. Set `PAYPAL_WEBHOOK_ID`
-  to its id. Every delivery is verified with PayPal's verify-webhook-signature API (failure: `400`), then
-  deduplicated on the event id. A void or capture whose HTTP call timed out is settled by the matching
-  event, so the deal state ends up where the money is (ledger kind `reconcile`). A capture event the deal cannot
-  follow (deal `ESCROWED` or `VOIDED`), and denied, reversed or refunded captures, change no state. They are
-  ledgered as `paypal_alert` and the deal view shows `needs_attention`.
-- **Mandate versions.** `Mandate.version` is signed. Publishing a mandate whose version is not newer than the
-  one on file is refused (`409`), so an old signed mandate cannot be replayed to undo a newer one.
-
-Proof of concept (sandbox only; refuses `PAYPAL_ENV=live`):
-
-```bash
-python examples/sandbox_poc.py --settle      # or --refund; open the printed approve URL as a sandbox buyer
-python examples/sandbox_poc.py --dry-run     # same steps with no network or credentials
-python examples/sandbox_poc.py --settle --auto-approve   # a browser approves as the sandbox buyer
-```
-
-`--auto-approve` (`uv sync --extra e2e`) logs in as `PAYPAL_SANDBOX_BUYER_EMAIL` / `PAYPAL_SANDBOX_BUYER_PASSWORD` in
-local Chromium, or in a remote browser such as one started by KERNEL when `PAYPAL_E2E_CDP_URL` is set, and approves.
-Success means PayPal redirected to the return URL. The `sandbox-e2e` workflow runs this weekly once the sandbox secrets
-are set. The selectors for PayPal's pages are a best guess, not yet checked against the live sandbox; override them
-with `PAYPAL_E2E_SELECTORS` (`src/trustee/sandbox_approver.py`).
-
-### A2A: JSON-RPC and push notifications
-
-Trustee implements the Agent2Agent protocol **spec 1.0.0, JSON-RPC binding** at `POST /a2a`, so any A2A agent can use
-it as its escrow service and be told when money moves instead of polling. Full reference: [docs/A2A.md](docs/A2A.md).
-
-- **Skills.** `SendMessage` with one DataPart `{"skill": "open-escrow", "input": {...}}` runs the same operation as the
-  matching REST call, with the same signed payload: `register-principal`, `register-agent`, `publish-mandate`,
-  `revoke-mandate`, `open-escrow`, `record-delivery`, `attest-delivery`, `get-deal`. A text-only message gets a help
-  message listing them. The Ed25519 signatures inside the payloads authorize every change; A2A is only the transport.
-- **A deal is a task** (`taskId = deal_id`), rebuilt from the durable deal on every `GetTask`, so it survives restarts:
-  `AUTH_REQUIRED` (payer must approve at PayPal) -> `INPUT_REQUIRED` (funds held, seller must deliver) -> `WORKING`
-  (delivered, buyer verifying; also disputes) -> `COMPLETED` with a `settlement-receipt` artifact (captured or
-  refunded). A payer-cancelled deal is `CANCELED`; a refused contract is `REJECTED`.
-  `ListTasks` and `CancelTask` (only before the payer approves, no PayPal call) are supported.
-- **Push.** `CreateTaskPushNotificationConfig` (or `configuration.taskPushNotificationConfig` in `SendMessage`) makes
-  Trustee `POST {"task": ...}` to your webhook on every state change, with your token in `X-A2A-Notification-Token`:
-  a seller learns "funds are held, ship now" without polling. Delivery runs on a background worker with retries and
-  never blocks the money path. URLs must be https (127.0.0.1/localhost allowed); configs are stored in SQLite.
-- **Client.** `trustee.a2a.A2AClient` is a generic JSON-RPC A2A client (`fetch_card`, `send_message`, `call_skill`,
-  `get_task`, `list_tasks`, `cancel_task`, `set_push_config`), usable against any A2A agent.
-- **Also accepted:** the v0.3 method names (`message/send`, `tasks/get`, ...), answered in the v0.3 shape.
-- **Not implemented:** streaming (`SendStreamingMessage`, `SubscribeToTask`), the authenticated extended card, the gRPC and
-  HTTP+JSON A2A bindings, task `history`, tenants, Agent Card signatures. Trustee's `/v1` REST API is listed in the card
-  but is not the A2A HTTP+JSON binding.
-
-Call it from Python:
-
-```python
-from trustee.a2a import A2AClient
-
-c = A2AClient("http://127.0.0.1:8000")
-task = c.call_skill("open-escrow", signed_contract_dict)  # then record-delivery / attest-delivery with task_id=task.id
-```
-
-### The A2A network: three agents
-
-Northwind's planning agent and Tidewater's sales agent are real A2A agents too, each with its own Agent Card and
-JSON-RPC endpoint (`/agents/northwind`, `/agents/tidewater` on the arena server, or standalone). Given only Tidewater's
-address, Northwind reads its card, gets a quote, negotiates over A2A with Ed25519-signed offers (each side checks the
-other's key from its card), has Tidewater countersign the contract, registers at Trustee and opens the escrow. Trustee
-pushes "funds held" to Tidewater, which sends the CSV to Northwind as an A2A file part; Northwind verifies the bytes and
-attests. The arena scenario **Three A2A agents** (`a2a`) shows every hop as an `a2a` row on the tape.
-
-```bash
-python examples/a2a_network.py            # Trustee + Northwind + Tidewater on three 127.0.0.1 ports, one purchase
-python examples/a2a_network.py --cheat    # Tidewater ships junk: refunded, nothing captured
-```
-
-Details, skills and the identity-in-card convention: [docs/A2A.md](docs/A2A.md#the-a2a-network-northwind-and-tidewater-as-agents).
-
-### Client libraries and Postman
-
-- **OpenAPI.** `openapi/trustee-v1.json` describes every `/v1` route, every `/.well-known` route and the `/a2a` endpoint. Regenerate it with
-  `python scripts/export_openapi.py` after an API change. `tests/test_openapi.py` fails when the file is stale.
-- **Postman.** `postman/Trustee.postman_collection.json` runs the honest deal and three refusals end to end, then the same
-  deal over A2A (folder 4).
-  Import it with the environment file in the same folder. Its signed bodies use public demo keys, so do not
-  point it at a server that holds money.
-- **Python client.** `trustee.client.TrusteeClient` signs registrations, mandates and revocations, and refuses to
-  send a contract, delivery or attestation that the right party has not signed.
-
-The Python client, retry rules and the signing boundary are in [docs/SDKS.md](docs/SDKS.md).
-
-## Autonomous payments: consent once, then no clicks
-
-"Buy this for me" should not mean "approve every payment". Trustee implements the AP2 human-not-present pattern
-([docs/AUTONOMY.md](docs/AUTONOMY.md)): the human consents **once**, and the agent pays by itself inside limits that
-Trustee enforces deterministically.
-
-1. **One PayPal consent.** The principal approves a PayPal Vault consent a single time. Trustee keeps the resulting
-   payment token server side and hands out only an opaque `funding_ref`. The vault id is never returned, logged or
-   written to a receipt.
-2. **One signed intent mandate.** The principal signs the human's own sentence ("Buy Tidewater's Q3 2026 returns
-   dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256") together
-   with the limits derived from it. A model may *propose* those limits from the sentence; code checks the proposal
-   against the words, and only the principal's key makes it binding.
-3. **Every purchase is checked.** Fourteen rules run on each contract (signature chain, expiry, revocation, seller,
-   item, price, budget, velocity, required criteria, currency, funding). Each result is a `policy` row on the ledger.
-   All pass: the funds are held with no click (PayPal `vault_id`, still `AUTHORIZE`: capture waits for verified
-   delivery, and the intent is re-checked at capture). A hard violation (forged, revoked, expired, wrong seller) is
-   refused before PayPal. A soft overrun (price above the signed cap, unknown item) **steps up** to a human approval.
-4. **Everything is provable.** The ledger is hash-chained per deal and every finished deal gets an Ed25519-signed
-   settlement receipt. Check one offline, trusting no server:
-
-```bash
-curl -s $TRUSTEE/v1/deals/$DEAL/receipt > receipt.json
-curl -s "$TRUSTEE/v1/deals/$DEAL/events?limit=1000" > events.json
-python -m trustee.verify receipt.json --key $TRUSTEE/.well-known/trustee-key.json --events events.json
-```
-
-| Endpoint | Who signs | Purpose |
-|---|---|---|
-| `POST /v1/principals/{p}/funding` | principal | start the one-time PayPal consent; returns `funding_ref` and the link to open once |
-| `GET /v1/funding/return` | n/a (PayPal redirect) | vaults the payment method after the consent |
-| `POST /v1/principals/{p}/funding/{ref}/revoke` | principal | revoke a funding source; later purchases step up |
-| `POST /v1/intents`, `POST /v1/intents/{agent_id}/revoke` | principal | publish / revoke the signed intent mandate |
-| `GET /v1/deals/{id}/receipt`, `POST /v1/receipts/verify` | n/a | the signed settlement receipt, and a server-side check of one |
-| `GET /.well-known/trustee-key.json` | n/a | the public key that signs receipts (also in the Agent Card) |
-
-A2A skills: `register-funding`, `publish-intent`, `revoke-intent`. Arena: scenarios `honest`, `cheat`, `outside` and
-`a2a` now pay under the intent mandate (dry-run: always; sandbox: with `PAYPAL_DEMO_VAULT_ID`), and `overreach` shows
-the agent being refused permission to spend above its instruction. Without an intent mandate every flow behaves as
-before.
-
-| Var | Default | Meaning |
-|---|---|---|
-| `TRUSTEE_SIGNING_KEY` | generated, kept in the store | base64 Ed25519 private key that signs receipts |
-| `PAYPAL_DEMO_VAULT_ID` | unset | a **secret** Vault payment-token id so sandbox arena runs are autonomous. Never commit it |
-
-## Layout
-
-```
-src/trustee/
-  protocol.py        offer/contract JSON protocol (the only thing settlement sees)
-  identity.py        Ed25519 agent and principal keys, the registry, signature checks
-  mandate.py         AP2-lite mandate engine (+ optional reputation rules)
-  intent.py          intent mandates (human-not-present): signed instruction + limits, the rule engine, drafting
-  funding.py         vaulted PayPal funding sources behind opaque funding_refs
-  receipts.py        signed settlement receipts and the Trustee signing key
-  summary.py         the plain-language verdict every deal reports (status, headline, reasons, next step, money)
-  verification.py    Trustee checks the delivered file itself: content-addressed store, contract checks, counts
-  verify.py          `python -m trustee.verify`: check a receipt offline
-  sandbox_approver.py  approve a PayPal sandbox order in a browser (local Chromium or remote over CDP)
-  state.py           deal state machine (guarded, idempotent, transition hook)
-  paypal.py          PayPal adapter (authorize/capture/void/reauthorize, approval flow, vault, webhooks, dry-run)
-  partial.py         pro-rata settlement math (pure Decimal, no I/O, no LLM)
-  sweeper.py         deadline sweeper: auto-void lapsed deals, renew aging authorizations
-  ledger.py          append-only, hash-chained event log with subscribers
-  store.py           durable SQLite store: principals, agents, mandates, deals, events, webhooks
-  reputation.py      agent reputation across the deals it was a party to
-  alerts.py          human alerts (Zapier Catch Hook) when money needs a decision
-  channel3.py        Channel3 client; pricefeed.py checks a delivered price feed against it
-  analyst.py         ask the Elastic Agent Builder ledger analyst over A2A
-  llm.py             OpenAI-compatible client (NIM/OpenAI/Ollama)
-  agents/            trustee, buyer, seller, negotiator, arbiter
-  platform/          public /v1 API, reputation routes, A2A Agent Card, DealService (durable multi-deal host)
-  a2a/               A2A JSON-RPC server + client, skills, deal tasks, push notifications
-  network/           Northwind and Tidewater as A2A agents (cards, skills, signed negotiation, delivery,
-                     Zapier MCP back office)
-  elastic/           optional ledger shipping to Elasticsearch, ES|QL reputation
-  client.py          TrusteeClient SDK
-  arena/
-    runner.py        DealRunner — composes one deal, emits the tape
-    api.py           FastAPI + SSE
-    scenario.py      scenarios are data, not code
-    outside.py       the `outside` scenario (agents as HTTP clients of /v1)
-    a2a_flow.py      the `a2a` scenario (three A2A agents)
-    approval.py      waiting for a payer to approve at PayPal
-    scripted.py      ScriptedLLM (recorded moves, no network)
-    rows.py          ledger Event -> grid row
-    fixtures/        goods store, manifest, scenarios, transcripts, Channel3 recordings, CLI runners
-arena/ui/            Vite + React + AG Grid Community
-openapi/ postman/    API description and a runnable collection (see Client libraries and Postman)
-examples/            a2a_deal.py, a2a_network.py, sandbox_poc.py
-tests/               650+ tests: agents, runner, API, SSE, PayPal request shapes, money path, identity,
-                     mandates, intents, store, platform API, approval, webhooks, A2A, partial capture,
-                     Elastic, Channel3, Zapier MCP, durability, arena scenarios
-```
-
-## Configuration
-
-`.env` (all optional — empty means dry-run, no network):
-
-| Var | Default | Meaning |
-|---|---|---|
-| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | empty | empty ⇒ dry-run with local order ids |
-| `PAYPAL_ENV` | `sandbox` | `sandbox` \| `live` |
-| `PAYPAL_RETURN_URL` / `PAYPAL_CANCEL_URL` | `{TRUSTEE_PUBLIC_URL}/v1/paypal/return` / `/cancel` | used by the payer-approval redirect |
-| `LLM_BASE_URL` | NIM | any OpenAI-compatible endpoint |
-| `LLM_API_KEY` | empty | empty ⇒ scripted mode |
-| `LLM_MODEL` | `nvidia/nemotron-3.5-lightning-30b-a3b` | |
-| `LLM_EXTRA_BODY` / `LLM_TIMEOUT` | empty / `30` | JSON merged into each request (Nemotron needs thinking off); seconds before falling back to the recorded moves |
-| `TRUSTEE_LEDGER_PATH` | in-memory | JSONL durability when set |
-| `ARENA_APPROVAL_POLL_SECONDS` / `ARENA_APPROVAL_TIMEOUT_SECONDS` | `3` / `300` | how the arena waits for the buyer to approve in PayPal |
-| `ARENA_SELF_URL` | `http://127.0.0.1:$PORT` | where the `outside` scenario reaches the arena's own `/v1` API |
-| `ARENA_PARTIAL_SCENARIO` / `ARENA_PRICEFEED_SCENARIO` | unset | `1` lists the `partial` / three `pricefeed` scenarios in the UI |
-| `ARENA_UI_DIR` | `arena/ui/dist` | directory that serves the built UI |
-| `PAYPAL_SELLER_EMAIL` | placeholder | the order's payee; against the real sandbox it must be one of your sandbox business accounts |
-| `TRUSTEE_DB_PATH` etc. | | see [Platform API](#platform-api-a2a) |
-
-## Demo plan (≤3 min)
-
-1. **Honest run** — Northwind's agent and Tidewater's agent negotiate 144 → 168 → 156
-   for the Q3 returns dataset. Then the contract, escrow, delivery, machine-checked
-   attestation (hash matches, schema passes, 5,000 rows), capture. Zero human money-touch.
-2. **Cheat run** — the buyer caves at 170. Tidewater ships a junk export under the
-   contracted file name: a renamed column, 312 rows, reused order ids. The sha256
-   fails, the arbiter cites "sha256 matches contract", escrow voids. Northwind keeps
-   its money. *That* is why the trust layer exists.
-3. **Impostor** (20 s) — someone signs as Tidewater with a key nobody registered. The
-   page says "Stopped before payment. No money moved." and the Checks tab shows the one
-   failed signature: the Trustee refuses before PayPal is called.
-4. **Outside agents** (30 s) — two agents that live on their own servers register,
-   sign mandates and a contract and settle through `/v1`. In the Ledger tab, filter to
-   `api` to see each HTTP call, then to `identity` to see the four verified signatures.
-
-With sandbox credentials, run the honest scenario once more live for the real-money-path
-step: the page shows "waiting for buyer approval" and the **Approve in PayPal sandbox**
-button. Approve as the sandbox buyer; the hold, delivery check and capture follow on the
-tape. It is test money, and the page says so.
+The [docs index](docs/README.md) also covers partial capture, the Channel3 market check, the optional Elastic and
+Zapier integrations, deployment, and [the integrations Trustee uses, and why](docs/INTEGRATIONS.md).
 
 ## Status
 
-P1 (runner + service) and P2 (UI) are built and green, along with the platform API, A2A, intent-mandate autonomy,
-partial capture and the optional Elastic, Zapier and Channel3 integrations. The payer-approval flow, PayPal webhooks and
-reconciliation are implemented and tested against a mocked PayPal. P3, the real-sandbox run, is still open:
-nobody has run `examples/sandbox_poc.py` or the webhook path with credentials, so the real-PayPal behavior is
-unverified. `docs/BUILD-CRITIQUE.md` §1 lists what was broken in the adapter.
+The money path, the platform API, A2A, autonomous payments, partial capture and the optional integrations are built
+and covered by the test suite, which mocks PayPal's HTTP API. The hosted demo is connected to the real PayPal sandbox,
+but the end-to-end checks against it are still open: nobody has yet run `examples/sandbox_poc.py` or the webhook path
+with sandbox credentials, so behaviour against real PayPal is not yet verified. Once the sandbox secrets are set, the
+weekly `sandbox-e2e` workflow runs that script with a browser approving as the sandbox buyer; the webhook path still
+needs a run by hand.
 
-## Elastic (optional)
-
-Ship the ledger to Elasticsearch, expose `GET /v1/agents/{id}/reputation`, add reputation rules to mandates, and ask an Agent Builder ledger analyst over A2A. Off unless `ELASTICSEARCH_URL` is set. See [docs/ELASTIC.md](docs/ELASTIC.md).
-
-Northwind and Tidewater can also book settled deals in their own apps through Zapier MCP (invoices, CRM, bills, finance notes, and a step-up message to the principal). Off unless each agent's `*_ZAPIER_MCP_TOKEN` and tool map are set. See [docs/ZAPIER_MCP.md](docs/ZAPIER_MCP.md).
+Trustee is a hackathon project, not production software. [SECURITY.md](SECURITY.md) explains how to report a problem,
+and [CONTRIBUTING.md](CONTRIBUTING.md) how to work on the code.
 
 ## License
 
-Apache-2.0 (see LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).

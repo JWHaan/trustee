@@ -65,7 +65,7 @@ Elastic/Zapier; arbiter = stretch; AG Grid in one ledger panel.
 
 > **Since overtaken.** The build went past these cuts: `platform/service.py` hosts many concurrent deals, the
 > arbiter is built, and Elastic and Zapier are optional integrations. Still cut: Payouts and fee splits. See the
-> [README](README.md) for the current scope and [docs/PAYPAL_SCALE.md](docs/PAYPAL_SCALE.md) for what a PayPal
+> [README](../../README.md) for the current scope and [docs/PAYPAL_SCALE.md](../PAYPAL_SCALE.md) for what a PayPal
 > product would add.
 
 ## Rubric mapping

@@ -10,7 +10,7 @@
 # Until PAYPAL_CLIENT_ID is set, the job prints a notice and exits 0.
 #
 # The browser is Chromium on the runner. To use a remote browser instead (for example one started by KERNEL),
-# set PAYPAL_E2E_CDP_URL to its CDP WebSocket URL in a step before the run; see docs/SPONSORS.md.
+# set PAYPAL_E2E_CDP_URL to its CDP WebSocket URL in a step before the run; see docs/INTEGRATIONS.md.
 #
 # PayPal changes its login and review pages. If the browser step times out, override the selectors with the
 # PAYPAL_E2E_SELECTORS repository variable (JSON, see src/trustee/sandbox_approver.py).

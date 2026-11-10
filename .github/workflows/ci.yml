@@ -4,7 +4,7 @@
 # No secrets: the tests mock PayPal and the LLM, so they need no credentials. Dependencies come from
 # uv.lock (`--locked` fails the job if the lock file is out of date with pyproject.toml).
 
-name: ci
+name: CI
 
 on:
   push:

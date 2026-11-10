@@ -7,7 +7,7 @@ hosting setup. Deadline: **Nov 12, 2026 15:00 EST**. Solo build.
 
 > **Historical plan.** This is the build plan as written before P1. The numbers below (test counts, "four
 > agents", one scenario pair) describe the project at that time. For what exists now, read the
-> [README](../README.md); for the PayPal product direction, [PAYPAL_SCALE.md](./PAYPAL_SCALE.md).
+> [README](../../README.md); for the PayPal product direction, [PAYPAL_SCALE.md](../PAYPAL_SCALE.md).
 >
 > **Status at the time:** P1 + P2 were built and green (45 tests, mypy + ruff clean).
 > Corrections to this document, with evidence, are in
