@@ -75,7 +75,7 @@ from ..network import Northwind, Tidewater
 from ..paypal import EscrowOrder, PayPalClient, PayPalError, sandbox_emails
 from ..protocol import Accept, Contract, Counter, Offer
 from ..receipts import build_receipt, load_signing_key
-from ..state import Deal, DealState
+from ..state import TERMINAL, Deal, DealState
 from ..store import Store
 from ..summary import summarize
 from ..verification import BlobStore, DeliveryVerifier
@@ -415,6 +415,8 @@ class DealRunner:
             # Identity or mandate refusal, PayPal failure, or a payer who never approved: all
             # honest, all terminal here.
             outcome = stopped or decision.action
+            if deal.state not in TERMINAL:
+                deal.transition(DealState.VOIDED, outcome)
             self.ledger.append(deal_id, "arena", "run", event="run_stopped", note=outcome)
             result = self._result(
                 run_id, deal, scenario, requested, effective, contract, decision.escrow, fallback_from

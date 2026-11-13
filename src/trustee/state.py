@@ -34,7 +34,7 @@ TERMINAL = frozenset({DealState.SETTLED, DealState.VOIDED})
 
 _TRANSITIONS: dict[DealState, set[DealState]] = {
     DealState.DRAFT: {DealState.NEGOTIATING},
-    DealState.NEGOTIATING: {DealState.CONTRACTED, DealState.DRAFT},
+    DealState.NEGOTIATING: {DealState.CONTRACTED, DealState.DRAFT, DealState.VOIDED},
     DealState.CONTRACTED: {DealState.ESCROWED, DealState.VOIDED},
     DealState.ESCROWED: {DealState.DELIVERED, DealState.VOIDED},
     DealState.DELIVERED: {DealState.SETTLED, DealState.DISPUTED, DealState.VOIDED},
