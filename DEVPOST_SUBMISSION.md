@@ -8,11 +8,11 @@ Trustee
 
 ## Tagline
 
-Escrow and arbitration for agent-to-agent commerce, on PayPal.
+What escrow.com is to strangers, Trustee is to AI agents — except the escrow agent verifies the goods itself, and both parties are software.
 
 ## Elevator pitch / short description
 
-Trustee lets one company's AI agent buy digital goods from another company's AI agent without either side having to trust the other up front. It uses PayPal to hold the buyer's funds, independently verifies the delivered file against the signed contract, and captures or refunds automatically.
+Two companies' AI agents want to transact — and neither trusts the other. Trustee is the neutral third party: it holds the buyer's funds in a PayPal authorization, downloads and verifies the delivered bytes itself (SHA-256, schema, market price), then captures or voids automatically. No human approves the payment, no LLM decides it — only signed policy code moves money.
 
 ## Links and assets
 
@@ -25,7 +25,9 @@ Trustee lets one company's AI agent buy digital goods from another company's AI 
 
 ## Inspiration
 
-AI agents are starting to buy things from each other — data, API access, digital work — but the money layer was never built for them. If a buyer agent pays first, the seller can ship garbage. If the seller delivers first, the buyer can refuse to pay. Humans solve this with escrow and chargebacks; agents have neither trust nor recourse.
+AI agents are starting to buy things from each other — data, API access, digital work — but the money layer was never built for them. If a buyer agent pays first, the seller can ship garbage. If the seller delivers first, the buyer can refuse to pay. Humans solved this with escrow.com and chargebacks; agents have neither trust nor recourse.
+
+Most hackathon escrow projects still put a human in the loop — a client clicks approve, a merchant reviews a dashboard. Trustee removes the human entirely: the buyer and seller are both autonomous agents, and the only thing allowed to move money is deterministic, signed policy. The LLM negotiates and explains; it has no code path to PayPal.
 
 We wanted a neutral third party both sides' agents could trust by construction: one that holds the funds, checks the deliverable itself, and settles or refunds automatically — on payment rails they already use. PayPal's authorize/capture/void primitives map cleanly onto escrow, but PayPal doesn't verify digital deliverables. That gap is Trustee.
 
@@ -33,7 +35,7 @@ We wanted a neutral third party both sides' agents could trust by construction: 
 
 AI agents can negotiate, agree on a deal, and then have nowhere safe to settle it. If the buyer pays first, the seller can underdeliver. If the seller delivers first, the buyer can refuse to pay. Existing agent protocols cover discovery, identity, mandates, and checkout, but not conditional settlement between two parties that are both software.
 
-Trustee is the missing trust layer. A buyer agent and seller agent form a signed, machine-readable contract. Trustee checks that contract against both parties' signed mandates before PayPal is ever called. If the deal is allowed, Trustee opens a PayPal authorization so the funds are held, not moved. The seller then hands Trustee the deliverable and records a signed delivery. Trustee checks the delivered bytes itself against the contract: SHA-256 hash, schema, row rules, and optional market-price checks. If the checks pass, Trustee captures payment to the seller. If they fail, it voids the hold and returns the money to the buyer. A partly valid delivery can settle pro-rata for the valid share.
+Trustee is the missing trust layer — a neutral escrow agent for commerce where both counterparties are software. A buyer agent and seller agent form a signed, machine-readable contract. Before PayPal is ever called, Trustee checks that contract against both parties' signed mandates — budget caps, counterparty allowlists, expiry. A deal outside policy is rejected before a cent is held. If the deal is allowed, Trustee opens a PayPal authorization so the funds are held, not moved. The seller then hands Trustee the deliverable and records a signed delivery. Trustee checks the delivered bytes itself against the contract: SHA-256 hash, schema, row rules, and optional market-price checks. If the checks pass, Trustee captures payment to the seller. If they fail, it voids the hold and returns the money to the buyer. A partly valid delivery can settle pro-rata for the valid share.
 
 Every contract, mandate, delivery, ruling, receipt, and ledger entry is signed. The ledger is hash-chained, and dispute evidence packs can be verified offline. The LLM can negotiate and explain, but only deterministic policy code can move money.
 
@@ -134,6 +136,7 @@ uv run python -m uvicorn trustee.arena.api:app --port 8000
 - Added a hash-chained ledger and offline-verifiable receipts.
 - Added a public REST API and A2A agent interface so external agents can use Trustee.
 - Added pro-rata settlement, stale-price checks, forged-identity rejection, mandate overreach handling, and human step-up approvals.
+- Verified all 10 arena scenarios end-to-end on the live PayPal sandbox — 7 settle with real captured orders, 3 void as designed — plus a CI workflow (`sandbox-e2e`) that completes a real authorize→capture on every push (e.g. authorization `7J3993247F013415U`, capture `9HY209711U9483505`) and a hosted run that settled with `human_present: false` via vaulted mandate (run `run_c5d3882f4a8e`, $143.00 captured).
 - Added a hosted demo arena showing the conversation, verification checks, PayPal order state, decision, and ledger.
 - Added an executable attack suite covering 17 adversarial cases.
 
@@ -143,8 +146,7 @@ The important boundary is not "AI versus rules." It is which layer is allowed to
 
 ## What's next
 
-- Complete the remaining real PayPal sandbox end-to-end and webhook validation.
-- Move the hosted demo to durable storage for production-like operation.
+- Move the hosted demo to durable storage for production-like operation (in-memory state on the free tier loses platform deals on restart — documented, not hidden).
 - Expand verifier types beyond CSV/schema/hash and Channel3 market checks.
 - Add more agent frameworks and marketplace integrations.
 - Publish the contract, attestation, receipt, and evidence formats as an open protocol extension.
