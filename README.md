@@ -145,7 +145,9 @@ and covered by the test suite, which mocks PayPal's HTTP API. The real-sandbox p
 `sandbox-e2e` workflow runs `examples/sandbox_poc.py` with a browser approving as the sandbox buyer (latest green run:
 authorization `7J3993247F013415U`, capture `9HY209711U9483505`), and hosted arena runs at
 https://trustee-arena.onrender.com settle real sandbox orders with no human in the loop via the vaulted mandate
-(e.g. run `run_c5d3882f4a8e`: order `3JT36509FL734773D`, $143.00 captured).
+(e.g. run `run_c5d3882f4a8e`: order `3JT36509FL734773D`, $143.00 captured). All ten arena scenarios have been run
+against the hosted sandbox to their expected terminal state — honest deals settle, and cheat, forged-identity and
+stale-feed deals void.
 
 Trustee is a hackathon project, not production software. [SECURITY.md](SECURITY.md) explains how to report a problem,
 and [CONTRIBUTING.md](CONTRIBUTING.md) how to work on the code.
