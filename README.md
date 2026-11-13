@@ -141,11 +141,11 @@ Zapier integrations, deployment, and [the integrations Trustee uses, and why](do
 ## Status
 
 The money path, the platform API, A2A, autonomous payments, partial capture and the optional integrations are built
-and covered by the test suite, which mocks PayPal's HTTP API. The hosted demo is connected to the real PayPal sandbox,
-but the end-to-end checks against it are still open: nobody has yet run `examples/sandbox_poc.py` or the webhook path
-with sandbox credentials, so behaviour against real PayPal is not yet verified. Once the sandbox secrets are set, the
-weekly `sandbox-e2e` workflow runs that script with a browser approving as the sandbox buyer; the webhook path still
-needs a run by hand.
+and covered by the test suite, which mocks PayPal's HTTP API. The real-sandbox path is verified end to end: the weekly
+`sandbox-e2e` workflow runs `examples/sandbox_poc.py` with a browser approving as the sandbox buyer (latest green run:
+authorization `7J3993247F013415U`, capture `9HY209711U9483505`), and hosted arena runs at
+https://trustee-arena.onrender.com settle real sandbox orders with no human in the loop via the vaulted mandate
+(e.g. run `run_c5d3882f4a8e`: order `3JT36509FL734773D`, $143.00 captured).
 
 Trustee is a hackathon project, not production software. [SECURITY.md](SECURITY.md) explains how to report a problem,
 and [CONTRIBUTING.md](CONTRIBUTING.md) how to work on the code.

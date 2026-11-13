@@ -18,7 +18,7 @@ always runnable by name and appear in the UI only when their flag is set:
 | `a2a` | Northwind and Tidewater are separate A2A agents: they find each other by Agent Card, negotiate with signed offers, open the escrow at Trustee, and Tidewater ships when Trustee pushes "funds held". | `SETTLED` |
 | `overreach` | The human said "at most $175"; the seller will not go below $190. The signed intent mandate refuses to pay unattended and steps up to a human approval (simulated in dry-run). | `SETTLED` after step-up |
 | `partial` | 500 of 5,000 rows fail the row checks; a signed pro-rata term captures the valid 90% ($140.40 of $156.00) and releases the rest. Listed with `ARENA_PARTIAL_SCENARIO=1`. | `SETTLED` (partial) |
-| `pricefeed` | A competitor price feed; the buyer samples 20 rows and checks them against live Channel3 offers before paying. Listed with `ARENA_PRICEFEED_SCENARIO=1`. | `SETTLED` |
+| `pricefeed` | A competitor price feed; the buyer samples 20 rows and checks them against Channel3 offers before paying (recorded snapshot on the hosted demo, live API with `CHANNEL3_API_KEY` and no `CHANNEL3_MODE=recorded`). Listed with `ARENA_PRICEFEED_SCENARIO=1`. | `SETTLED` |
 | `pricefeed-stale` | The hash matches, but the prices are months old; the market check fails and the escrow is voided. | `VOIDED` |
 | `pricefeed-mixed` | 8 of 40 rows are wrong; pro-rata capture of the sampled rows that checked out. | `SETTLED` (partial) |
 
