@@ -4,9 +4,10 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab.svg)](pyproject.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Escrow and arbitration for agent-to-agent commerce, on PayPal.** When one company's AI agent buys data or digital
-work from another company's agent, Trustee holds the payment with PayPal, checks the delivered file itself, and pays
-the seller only if the file matches the contract. Otherwise the buyer gets the money back.
+**Escrow.com for agent-to-agent commerce, on PayPal — except both parties are software and the escrow agent verifies
+the goods itself.** When one company's AI agent buys data or digital work from another company's agent, Trustee holds
+the payment with PayPal, checks the delivered file itself, and pays the seller only if the file matches the contract.
+Otherwise the buyer gets the money back.
 
 **Try it:** the [live demo](https://trustee-arena.onrender.com) runs on the PayPal sandbox, so each payment there
 waits for approval from a PayPal sandbox buyer account, and the free host can take a minute to wake up. The
@@ -23,6 +24,10 @@ and a seller agent sign a machine contract, Trustee checks it against both parti
 limits: budget caps, counterparty allowlists, expiry), holds the money in **PayPal escrow** (Orders authorize, then
 capture or void), **checks the delivered file itself**, and settles or refunds on its own finding rather than on
 either party's word. Every decision lands in a hash-chained **ledger**.
+
+No human approves the money movement and no LLM can make one: the model negotiates and explains, while only signed
+policy code calls PayPal. A failed delivery isn't an edge case — the **arena** runs ten scenarios including forged
+identities, junk files and stale prices, and every cheat ends `VOIDED` with the buyer's money back.
 
 **Who it's for.** Any business whose agents buy data, API access or digital work from another company's agents. The
 worked example in this repository: **Northwind Outfitters**, a mid-size online apparel retailer, has a
