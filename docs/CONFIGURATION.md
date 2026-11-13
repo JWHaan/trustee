@@ -19,8 +19,9 @@ optional: empty means a dry run, with no network calls, local PayPal order ids a
 | `ARENA_SELF_URL` | `http://127.0.0.1:$PORT` | where the `outside` scenario reaches the arena's own `/v1` API |
 | `ARENA_PARTIAL_SCENARIO` / `ARENA_PRICEFEED_SCENARIO` | unset | `1` lists the `partial` / three `pricefeed` scenarios in the UI |
 | `ARENA_UI_DIR` | `arena/ui/dist` | directory that serves the built UI |
+| `ARENA_RUNS_PER_MINUTE` / `ARENA_MAX_ACTIVE_RUNS` | `20` / `8` | per-client run creation cap and global in-flight cap on `POST /api/runs` (in-process; reads stay open) |
 | `PAYPAL_SELLER_EMAIL` | placeholder | the order's payee; against the real sandbox it must be one of your sandbox business accounts |
-| `TRUSTEE_PUBLIC_URL`, `TRUSTEE_DB_PATH`, `TRUSTEE_OPERATOR_TOKEN`, `TRUSTEE_SWEEP_SECONDS`, `PAYPAL_WEBHOOK_ID`, `TRUSTEE_WEBHOOK_ALLOW_UNVERIFIED` | | the platform API: see [API.md](API.md#platform-api) |
+| `TRUSTEE_PUBLIC_URL`, `TRUSTEE_DB_PATH`, `TRUSTEE_OPERATOR_TOKEN`, `TRUSTEE_SWEEP_SECONDS`, `PAYPAL_WEBHOOK_ID`, `TRUSTEE_WEBHOOK_ALLOW_UNVERIFIED`, `TRUSTEE_CRITERIA_PER_MINUTE` | | the platform API: see [API.md](API.md#platform-api); criteria drafts are capped per client per minute (default 10) |
 | `TRUSTEE_SIGNING_KEY`, `PAYPAL_DEMO_VAULT_ID` | | autonomous payments: see [API.md](API.md#autonomous-payments-consent-once-then-no-clicks) |
 | `PAYPAL_SANDBOX_BUYER_EMAIL` / `PAYPAL_SANDBOX_BUYER_PASSWORD`, `PAYPAL_E2E_CDP_URL`, `PAYPAL_E2E_SELECTORS`, `PAYPAL_E2E_CHROMIUM` | | the browser that approves sandbox orders for `sandbox_poc.py --auto-approve`: see [API.md](API.md#real-paypal-sandbox) |
 

@@ -197,3 +197,64 @@ def test_mode_is_echoed_back(mode: str):
             assert snap["effective_mode"] == mode
 
     asyncio.run(go())
+
+
+# ------------------------------------------------------------- run limiting
+
+
+def test_run_limiter_bounds_per_client_and_in_flight():
+    from trustee.arena.api import _RunLimiter
+
+    limiter = _RunLimiter(per_minute=2, max_active=1)
+    assert limiter.allow("ip", active=0) is None
+    assert limiter.allow("ip", active=0) is None
+    assert limiter.allow("ip", active=0) is not None  # third in a minute
+    assert limiter.allow("other-ip", active=0) is None
+    assert limiter.allow("ip", active=1) is not None  # in-flight cap
+
+
+def test_create_run_returns_429_when_limited(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ARENA_RUNS_PER_MINUTE", "1")
+
+    async def go() -> None:
+        async with make_client() as client:
+            first = await client.post("/api/runs", json={"scenario": "forged", "mode": "scripted"})
+            assert first.status_code == 200
+            second = await client.post("/api/runs", json={"scenario": "forged", "mode": "scripted"})
+            assert second.status_code == 429
+
+    asyncio.run(go())
+
+
+# ------------------------------------------------------------- registry edge
+
+
+def test_evicted_run_closes_sse_with_done():
+    from trustee.arena.api import Registry, RunRecord
+
+    async def go() -> None:
+        registry = Registry(cap=1)
+        rec = RunRecord("run_old", "honest", "scripted")
+        registry.put(rec)
+        queue = rec.subscribe()
+
+        registry.put(RunRecord("run_new", "honest", "scripted"))
+        assert rec.done is True
+        assert await queue.get() is None  # terminal marker, not a hang
+
+    asyncio.run(go())
+
+
+# ------------------------------------------------------------------ health
+
+
+def test_healthz_reports_paypal_env_not_hardcoded_sandbox():
+    async def go() -> None:
+        app = create_app(
+            ledger=Ledger(),
+            paypal=PayPalClient(client_id="x", client_secret="y", env="live", dry_run=False),
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://arena") as client:
+            assert (await client.get("/healthz")).json()["paypal"] == "live"
+
+    asyncio.run(go())

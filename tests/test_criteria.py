@@ -133,3 +133,11 @@ def test_a_new_data_good_is_verified_end_to_end_from_drafted_criteria():
 def test_the_draft_endpoint_rejects_an_empty_request():
     w = DataWorld().setup()
     assert w.http.post("/v1/criteria/draft", json={"request": ""}).status_code == 422
+
+
+def test_the_draft_endpoint_is_rate_limited_per_client():
+    """It can call the LLM, so a public deployment caps drafts per client."""
+    w = DataWorld().setup()
+    for _ in range(10):
+        assert w.http.post("/v1/criteria/draft", json={"request": REQUEST}).status_code == 200
+    assert w.http.post("/v1/criteria/draft", json={"request": REQUEST}).status_code == 429

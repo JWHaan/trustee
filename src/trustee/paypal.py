@@ -95,6 +95,7 @@ class PayPalClient:
         vault_return_url: str | None = None,
         vault_cancel_url: str | None = None,
     ):
+        self.env = env
         self.base_url = base_url or BASE_URLS[env]
         # `client_id and client_secret` returns "" when both are empty — which is
         # falsy but *not* False, so `if self.dry_run:` still went to the network

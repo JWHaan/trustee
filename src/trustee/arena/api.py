@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -152,7 +153,13 @@ class Registry:
     def put(self, rec: RunRecord) -> None:
         self._runs[rec.run_id] = rec
         while len(self._runs) > self._cap:
-            self._runs.popitem(last=False)
+            _run_id, oldest = self._runs.popitem(last=False)
+            # Close the evicted run's streams: without this its subscribers
+            # would sit on keepalives forever waiting for a `done` that never comes.
+            oldest.fail("evicted from the run registry")
+
+    def active(self) -> int:
+        return sum(1 for rec in self._runs.values() if not rec.done)
 
     def get(self, run_id: str) -> RunRecord | None:
         return self._runs.get(run_id)
@@ -201,6 +208,39 @@ class ApprovalRegistry:
             event = self._orders.get(order_id)
         if event is not None:
             event.set()
+
+
+class _RunLimiter:
+    """Bounds run creation: a public demo must not let one client mint PayPal
+    orders or burn LLM tokens in a loop. Reads stay open; only POST /api/runs
+    is gated. Per-client sliding window plus a global in-flight cap."""
+
+    def __init__(self, per_minute: int, max_active: int, window_s: float = 60.0):
+        self.per_minute = per_minute
+        self.max_active = max_active
+        self.window_s = window_s
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, active: int) -> str | None:
+        """None when the run may start, else the rejection reason."""
+        now = time.monotonic()
+        with self._lock:
+            hits = [t for t in self._hits.get(key, ()) if now - t < self.window_s]
+            self._hits[key] = hits
+            if len(hits) >= self.per_minute:
+                return "too many runs started; try again in a minute"
+            if active >= self.max_active:
+                return "too many runs in flight; try again shortly"
+            hits.append(now)
+        return None
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
 
 
 def _default_self_client() -> httpx.Client:
@@ -368,6 +408,10 @@ def create_app(
                 elastic_arena.attach(ledger)
                 elastic_sinks.append(elastic_arena)
     registry = Registry()
+    limiter = _RunLimiter(
+        per_minute=_env_int("ARENA_RUNS_PER_MINUTE", 20),
+        max_active=_env_int("ARENA_MAX_ACTIVE_RUNS", 8),
+    )
     tasks: set[asyncio.Task[None]] = set()
 
     app.state.ledger = ledger
@@ -391,12 +435,16 @@ def create_app(
     # ---------------------------------------------------------------- routes
 
     @app.post("/api/runs")
-    async def create_run(req: RunRequest) -> dict[str, Any]:
+    async def create_run(req: RunRequest, request: Request) -> dict[str, Any]:
         try:
             scenario = get_scenario(req.scenario)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
-        rec = RunRecord(f"run_{uuid.uuid4().hex[:10]}", scenario.name, req.mode)
+        client = request.client.host if request.client else "unknown"
+        reason = limiter.allow(client, registry.active())
+        if reason is not None:
+            raise HTTPException(status_code=429, detail=reason)
+        rec = RunRecord(f"run_{uuid.uuid4().hex[:12]}", scenario.name, req.mode)
         registry.put(rec)
         loop = asyncio.get_running_loop()
         task = asyncio.create_task(asyncio.to_thread(_execute, runner, rec, req.mode, loop))
@@ -499,7 +547,7 @@ def create_app(
         return {
             "ok": True,
             "runs": len(registry),
-            "paypal": "dry-run" if paypal.dry_run else "sandbox",
+            "paypal": "dry-run" if paypal.dry_run else getattr(paypal, "env", "sandbox"),
             "ledger": str(ledger.path) if ledger.path else "in-memory",
             "alerts": "webhook" if alert_sinks else "off",
             "store": service.store.path if service.store.path != ":memory:" else "in-memory",

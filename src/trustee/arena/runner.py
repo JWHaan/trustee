@@ -995,7 +995,8 @@ def _agreed_price(scenario: Scenario, view: dict[str, Any]) -> str:
 
 
 def _short() -> str:
-    return uuid.uuid4().hex[:8]
+    # 48 bits: deal ids are public-by-design, but should not be guessable.
+    return uuid.uuid4().hex[:12]
 
 
 def _pct(price: Decimal, base: Decimal) -> str:

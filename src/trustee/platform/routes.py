@@ -14,6 +14,9 @@ import asyncio
 import html
 import logging
 import os
+import threading
+import time
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -80,8 +83,37 @@ class ArenaApprovals(Protocol):
     def cancel(self, order_id: str) -> None: ...
 
 
+class _IpLimiter:
+    """Sliding-window per-client cap. criteria/draft can call the LLM, so a
+    public deployment must not let one client loop it for free."""
+
+    def __init__(self, per_minute: int, window_s: float = 60.0):
+        self.per_minute = per_minute
+        self.window_s = window_s
+        self._hits: dict[str, list[float]] = defaultdict(list)
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            hits = [t for t in self._hits[key] if now - t < self.window_s]
+            self._hits[key] = hits
+            if len(hits) >= self.per_minute:
+                return False
+            hits.append(now)
+            return True
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
 def build_router(service: DealService, arena_approvals: ArenaApprovals | None = None) -> APIRouter:
     router = APIRouter()
+    criteria_limiter = _IpLimiter(_env_int("TRUSTEE_CRITERIA_PER_MINUTE", 10))
 
     async def call(fn: Callable[..., Any], *args: Any, status: int = 200) -> JSONResponse:
         try:
@@ -489,10 +521,13 @@ def build_router(service: DealService, arena_approvals: ArenaApprovals | None = 
         ),
         responses=_errors({422: "The request is empty or names nothing checkable."}),
     )
-    async def draft_criteria(body: dict[str, Any]) -> JSONResponse:
-        request = str(body.get("request") or "")
+    async def draft_criteria(body: dict[str, Any], request: Request) -> JSONResponse:
+        client = request.client.host if request.client else "unknown"
+        if not criteria_limiter.allow(client):
+            raise HTTPException(status_code=429, detail="too many criteria drafts; try again in a minute")
+        request_text = str(body.get("request") or "")
         sha256 = body.get("sha256")
-        return await call(service.draft_criteria, request, str(sha256) if sha256 else None)
+        return await call(service.draft_criteria, request_text, str(sha256) if sha256 else None)
 
     @router.get(
         "/v1/deals/{deal_id}/evidence",

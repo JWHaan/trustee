@@ -109,3 +109,12 @@ already emitted, then fed live, so refreshing mid-run shows the same tape in
 the same order. Runs execute on a worker thread (`asyncio.to_thread`) because
 the agents are synchronous; ledger callbacks are marshalled back onto the event
 loop with `call_soon_threadsafe`.
+
+`POST /api/runs` is rate-limited (`ARENA_RUNS_PER_MINUTE`, default 20 per
+client per minute, plus `ARENA_MAX_ACTIVE_RUNS`, default 8 in flight) because
+each run can create a PayPal order and call the LLM; the limiter is
+in-process, so it bounds one instance, not a fleet. Deal and run ids carry 48
+bits of randomness — unguessable, not secret: deal data (contracts, receipts,
+evidence packs, ledger rows) is public by design, the same way a public
+blockchain or escrow.com order page is. Anyone holding an id can read that
+deal; mutating endpoints still require signed mandates or the operator token.
