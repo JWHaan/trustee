@@ -132,7 +132,7 @@ def test_forged_signature_is_rejected_before_paypal():
     assert paypal.calls == []
     assert result.outcome == "rejected_identity"
     assert result.error is None
-    assert result.state == "NEGOTIATING"  # never contracted
+    assert result.state == "VOIDED"  # rejected before escrow; voided so the run terminates
     rows = tape(runner, result.deal_id)
     assert not [r for r in rows if r["kind"] == "paypal"]
     checks = [(r["signer"], r["check"]) for r in rows if r["kind"] == "identity"]

@@ -155,7 +155,7 @@ def test_mandate_refusal_never_reaches_paypal():
     result = runner.run(get_scenario("honest"), mode="scripted")
 
     assert paypal.calls == []
-    assert result.state == "NEGOTIATING"  # never contracted
+    assert result.state == "VOIDED"  # refused before escrow; voided so the run terminates
     assert any(e.kind == "mandate" and e.payload.get("ok") is False for e in ledger.tail(result.deal_id))
 
 
