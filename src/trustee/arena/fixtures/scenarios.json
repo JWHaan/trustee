@@ -67,6 +67,7 @@
       "budget": "165.00",
       "cheat": false,
       "transcript": "honest",
+      "instruction": "Buy Tidewater's Q3 2026 returns dataset for demand planning; spend at most $175; only from Tidewater; must match the published sha256",
       "partial": {
         "basis": "units",
         "min_fraction": "0.5"
@@ -188,7 +189,8 @@
       "floor": "150.00",
       "budget": "165.00",
       "cheat": false,
-      "transcript": "honest"
+      "transcript": "honest",
+      "instruction": "Buy Tidewater's Q4 2026 competitor price feed for merchandising analysis; spend at most $175; only from Tidewater; must match the published sha256 and live market prices"
     },
     {
       "name": "pricefeed-stale",
@@ -210,7 +212,8 @@
       "floor": "150.00",
       "budget": "165.00",
       "cheat": false,
-      "transcript": "honest"
+      "transcript": "honest",
+      "instruction": "Buy Tidewater's Q4 2026 competitor price feed for merchandising analysis; spend at most $175; only from Tidewater; must match the published sha256 and live market prices"
     },
     {
       "name": "pricefeed-mixed",
@@ -236,7 +239,8 @@
       "floor": "150.00",
       "budget": "165.00",
       "cheat": false,
-      "transcript": "honest"
+      "transcript": "honest",
+      "instruction": "Buy Tidewater's Q4 2026 competitor price feed for merchandising analysis; spend at most $175; only from Tidewater; must match the published sha256 and live market prices"
     }
   ]
 }
