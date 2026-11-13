@@ -347,7 +347,16 @@ class PayPalClient:
         if resp.status_code not in (200, 201):
             raise PayPalError(f"authorize failed ({resp.status_code})", resp.status_code, resp.text[:500])
         authz = resp.json()
-        authz_id = (authz.get("authorizations") or [{}])[0].get("id", "")
+        # The authorize response is an Authorization resource (top-level `id`), but PayPal has also
+        # returned order-shaped bodies with the id nested under purchase_units or a flat list.
+        authz_id = str(
+            ((_first_authorization(authz) or {}).get("id") or "")
+            or ((authz.get("authorizations") or [{}])[0].get("id") or "")
+            or authz.get("id")
+            or ""
+        )
+        if not authz_id:
+            raise PayPalError("PayPal returned no authorization for the order")
         return EscrowOrder(order_id=order_id, authorization_id=authz_id, status="authorized", details=authz)
 
     # ------------------------------------------------------------ vault (one-time consent)

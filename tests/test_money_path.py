@@ -64,7 +64,7 @@ class Fake:
         if path.endswith("/v2/checkout/orders"):
             return httpx.Response(201, json={"id": "ORDER1", "status": "CREATED"})
         if path.endswith("/authorize"):
-            return httpx.Response(201, json={"authorizations": [{"id": "AUTH1"}]})
+            return httpx.Response(201, json={"id": "AUTH1", "status": "COMPLETED"})
         if path.endswith("/capture"):
             return httpx.Response(201, json={"id": "CAP1"})
         if path.endswith("/void"):
@@ -388,3 +388,36 @@ def test_sweeper_isolates_a_failing_deal():
     sweeper.register(t2, c2)
     out = sweeper.tick(T0 + timedelta(hours=2))
     assert [d for d, _ in out] == [c2.deal_id]
+
+
+def test_authorize_after_approval_accepts_all_paypal_response_shapes():
+    cases = [
+        ({"id": "AUTH-TOP", "status": "COMPLETED"}, "AUTH-TOP"),
+        ({"purchase_units": [{"payments": {"authorizations": [{"id": "AUTH-NESTED"}]}}]}, "AUTH-NESTED"),
+        ({"authorizations": [{"id": "AUTH-FLAT"}]}, "AUTH-FLAT"),
+    ]
+    for body, expected in cases:
+        fake = Fake()
+        base = fake.handler
+
+        def handler(request, _base=base, _body=body):
+            if request.url.path.endswith("/authorize"):
+                return httpx.Response(201, json=_body)
+            return _base(request)
+
+        fake.handler = handler
+        client = live(fake)
+        order = client.authorize_after_approval("ORDER1")
+        assert order.authorization_id == expected
+
+
+def test_authorize_after_approval_without_id_raises():
+    fake = Fake()
+    fake.handler = lambda request: (
+        httpx.Response(201, json={"status": "COMPLETED"})
+        if request.url.path.endswith("/authorize")
+        else Fake().handler(request)
+    )
+    client = live(fake)
+    with pytest.raises(PayPalError):
+        client.authorize_after_approval("ORDER1")
